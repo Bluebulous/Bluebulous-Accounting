@@ -101,7 +101,7 @@ with st.sidebar:
         st.rerun()
 
 # --- 主畫面標題 ---
-st.title("☁️ 企業財務戰情室 (Google Sheets 連動版)")
+st.title("☁️ Bluebulous 財務戰情室 (Cloud Version)")
 st.caption(f"資料來源: Google Sheet [{SHEET_NAME}]")
 
 # 分頁
