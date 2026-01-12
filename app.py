@@ -8,145 +8,121 @@ import os
 import json
 
 # --- 1. 設定區 ---
-# 定義權限範圍
 SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-# 指定您的試算表名稱 (需與 Google Drive 上的一模一樣)
 SHEET_NAME = "accounting_db" 
 
-# 設定頁面 (這行必須在最前面)
-st.set_page_config(page_title="公司財務戰情室 (雲端版)", page_icon="☁️", layout="wide")
+st.set_page_config(page_title="公司財務戰情室 (個人管理版)", page_icon="🏢", layout="wide")
 
-# --- 2. 核心函數：連接 Google Sheets (智慧切換模式) ---
+# --- 2. 連線與資料處理 ---
 @st.cache_resource
 def connect_to_gsheets():
     try:
-        # 情況 A: 如果電腦裡有 credentials.json (本機模式)
         if os.path.exists("credentials.json"):
             creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SCOPE)
-        
-        # 情況 B: 如果在雲端，讀取 Streamlit Secrets (雲端模式)
         elif "gcp_service_account" in st.secrets:
-            # 將 Secrets 轉換為字典格式
             key_dict = dict(st.secrets["gcp_service_account"])
             creds = ServiceAccountCredentials.from_json_keyfile_dict(key_dict, SCOPE)
-        
         else:
-            st.error("找不到金鑰！請確認本地有 credentials.json 或雲端已設定 Secrets。")
+            st.error("找不到金鑰！")
             st.stop()
-            
         client = gspread.authorize(creds)
-        sheet = client.open(SHEET_NAME).sheet1  # 開啟第一個工作表
+        sheet = client.open(SHEET_NAME).sheet1
         return sheet
     except Exception as e:
         st.error(f"❌ 無法連接 Google Sheets: {e}")
         st.stop()
 
-# --- 3. 資料讀取函數 ---
 def load_data():
     sheet = connect_to_gsheets()
     try:
-        # 讀取所有資料
-        data = sheet.get_all_records()
-        if not data:
-            return pd.DataFrame(columns=["Date", "Category", "Amount", "Note"])
+        # 使用 get_all_values 而不是 records，這樣才能確保我們掌握行數
+        all_values = sheet.get_all_values()
         
-        df = pd.DataFrame(data)
+        if len(all_values) < 2:
+            return pd.DataFrame(columns=["Date", "Category", "Amount", "Note", "User", "row_id"])
         
-        # 確保欄位名稱正確 (容錯處理)
-        # 如果 Google Sheet 欄位是中文，確保 DataFrame 也能對應
+        # 第一列是標題，後面是資料
+        header = all_values[0]
+        data = all_values[1:]
         
-        # 處理日期格式
+        df = pd.DataFrame(data, columns=header)
+        
+        # ⚠️ 關鍵：加上「行號 (row_id)」
+        # Excel 表格中，標題是第1行，第一筆資料是第2行。
+        # Python 的 index 是從 0 開始，所以第一筆資料 index 0 對應 Excel 的 Row 2
+        df['row_id'] = range(2, len(df) + 2) 
+
+        # 格式轉換
         if 'Date' in df.columns:
-            df['Date'] = pd.to_datetime(df['Date'])
-        
-        # 處理金額格式 (去除逗號轉數字)
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         if 'Amount' in df.columns:
-             if df['Amount'].dtype == 'object':
-                 df['Amount'] = pd.to_numeric(df['Amount'].astype(str).str.replace(',',''), errors='coerce')
-        
+             # 清除逗號並轉數字
+             df['Amount'] = df['Amount'].astype(str).str.replace(',', '').apply(pd.to_numeric, errors='coerce').fillna(0)
+             
         return df
     except Exception as e:
-        st.warning(f"讀取資料時發生錯誤或試算表為空: {e}")
-        return pd.DataFrame(columns=["Date", "Category", "Amount", "Note"])
+        return pd.DataFrame(columns=["Date", "Category", "Amount", "Note", "User", "row_id"])
 
-# --- 4. 資料寫入函數 ---
-def save_entry_to_cloud(date, category, amount, note):
+def save_entry_to_cloud(date, category, amount, note, user):
     sheet = connect_to_gsheets()
-    # 將日期轉為字串儲存
     date_str = date.strftime("%Y-%m-%d")
-    # 新增一列 (Append Row)
-    sheet.append_row([date_str, category, amount, note])
+    # 把使用者名稱 (user) 也存進去
+    sheet.append_row([date_str, category, amount, note, user])
 
-# --- 5. 主程式邏輯 (UI 介面) ---
+def delete_entry_from_cloud(row_id):
+    sheet = connect_to_gsheets()
+    sheet.delete_rows(int(row_id))
 
-# 初始化資料
+# --- 3. 初始化資料 ---
 df = load_data()
-
-# 類別選單
 categories = ["薪資", "租金", "進貨成本", "行銷廣告", "交通差旅", "辦公雜項", "稅務", "交際費"]
+# 定義員工名單 (您可以隨時在這裡增加名字)
+employees = ["選擇您的名字...", "王小明", "李大華", "張經理", "財務小美", "Boss"]
 
-# --- 側邊欄 ---
+# ==========================================
+# 🔐 側邊欄：身份與權限設定
+# ==========================================
 with st.sidebar:
-    st.title("☁️ 雲端設定")
-    if not df.empty and 'Date' in df.columns:
-        min_year = int(df['Date'].dt.year.min())
-        max_year = int(df['Date'].dt.year.max())
-        years = list(range(max_year, min_year - 1, -1))
-        selected_year = st.selectbox("📅 分析年份", ["所有年份"] + years)
+    st.title("👤 身份設定")
+    
+    # 1. 選擇我是誰
+    current_user = st.selectbox("請問您是哪一位？", employees)
+    
+    st.markdown("---")
+    
+    # 2. 管理員登入 (只有老闆要用)
+    st.subheader("🔐 管理員專區")
+    
+    if "admin_password" in st.secrets:
+        correct_password = st.secrets["admin_password"]
     else:
-        selected_year = "所有年份"
+        correct_password = "admin" 
+    
+    admin_input = st.text_input("輸入密碼解鎖總報表", type="password")
+    
+    is_admin = False
+    if admin_input == correct_password:
+        is_admin = True
+        st.success("✅ 管理員模式已啟動")
+        if st.button("🔄 強制重新整理資料"):
+            st.cache_data.clear()
+            st.rerun()
 
-    if st.button("🔄 重新整理資料"):
-        st.cache_data.clear()
-        st.rerun()
+# --- 4. 主畫面顯示邏輯 ---
 
-# --- 主畫面標題 ---
-st.title("☁️ Bluebulous 財務戰情室 (Cloud Version)")
-st.caption(f"資料來源: Google Sheet [{SHEET_NAME}]")
+st.title("🏢 公司記帳系統")
 
-# 分頁
-tab1, tab2, tab3 = st.tabs(["📈 視覺化儀表板", "➕ 新增支出", "📋 詳細資料"])
+if current_user == "選擇您的名字...":
+    st.info("👈 請先在左側選單選擇您的名字，才能開始記帳。")
+    st.stop() # 暫停執行下面的程式，直到選了名字
 
-# --- TAB 1: 視覺化 ---
+st.write(f"👋 您好，**{current_user}**！")
+
+# 分頁設定
+tab1, tab2, tab3, tab4 = st.tabs(["➕ 新增支出", "📝 我的紀錄 (可修改)", "📈 總報表 (限)", "📋 總明細 (限)"])
+
+# --- TAB 1: 新增支出 (自動帶入名字) ---
 with tab1:
-    if df.empty:
-        st.info("目前沒有資料，請至「新增支出」分頁輸入第一筆數據。")
-    else:
-        dashboard_df = df.copy()
-        if selected_year != "所有年份":
-            dashboard_df = dashboard_df[dashboard_df['Date'].dt.year == selected_year]
-        
-        if dashboard_df.empty:
-            st.warning("該年份無資料")
-        else:
-            # KPI
-            total = dashboard_df['Amount'].sum()
-            avg = dashboard_df['Amount'].mean()
-            
-            c1, c2 = st.columns(2)
-            c1.metric("總支出", f"${total:,.0f}")
-            c2.metric("平均支出", f"${avg:,.0f}")
-            
-            st.markdown("---")
-            
-            # 圖表
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("類別佔比")
-                if 'Category' in dashboard_df.columns:
-                    cat_sum = dashboard_df.groupby("Category")["Amount"].sum().reset_index()
-                    fig_pie = px.pie(cat_sum, values='Amount', names='Category', hole=0.4)
-                    st.plotly_chart(fig_pie, use_container_width=True)
-            
-            with col2:
-                st.subheader("月度趨勢")
-                if 'Date' in dashboard_df.columns:
-                    monthly = dashboard_df.set_index('Date').resample('ME')['Amount'].sum().reset_index()
-                    fig_line = px.line(monthly, x='Date', y='Amount')
-                    st.plotly_chart(fig_line, use_container_width=True)
-
-# --- TAB 2: 新增支出 ---
-with tab2:
     st.header("新增一筆紀錄")
     with st.form("cloud_entry", clear_on_submit=True):
         d = st.date_input("日期", datetime.today())
@@ -154,21 +130,77 @@ with tab2:
         c = st.selectbox("類別", categories)
         n = st.text_input("備註")
         
-        submitted = st.form_submit_button("☁️ 上傳至雲端")
+        submitted = st.form_submit_button("☁️ 上傳資料")
         if submitted:
             if a > 0:
-                with st.spinner("正在寫入 Google Sheets..."):
-                    save_entry_to_cloud(d, c, a, n)
-                st.success("✅ 資料已同步至 Google Sheets！")
+                with st.spinner("正在寫入雲端..."):
+                    # 這裡把 current_user 傳進去
+                    save_entry_to_cloud(d, c, a, n, current_user)
+                st.success("✅ 資料已儲存！")
                 st.cache_data.clear()
                 st.rerun()
             else:
                 st.error("金額必須大於 0")
 
-# --- TAB 3: 資料表 ---
-with tab3:
-    if not df.empty:
-        st.dataframe(df.sort_values(by="Date", ascending=False), use_container_width=True)
-        st.info("如需修改或刪除舊資料，請直接前往 Google Sheets 操作，完成後按側邊欄的「重新整理」。")
+# --- TAB 2: 我的紀錄 (只看得到自己的，且可刪除) ---
+with tab2:
+    st.header(f"📝 {current_user} 的記帳紀錄")
+    
+    if not df.empty and "User" in df.columns:
+        # 篩選：只抓出 User 欄位等於 current_user 的資料
+        my_df = df[df["User"] == current_user].copy()
+        
+        if my_df.empty:
+            st.info("您目前還沒有輸入過任何資料。")
+        else:
+            # 顯示表格
+            st.dataframe(my_df[["Date", "Category", "Amount", "Note"]].sort_values(by="Date", ascending=False), use_container_width=True)
+            
+            st.markdown("---")
+            st.subheader("❌ 刪除/修改資料")
+            st.caption("如果您輸入錯誤，請在這裡選取該筆資料並刪除，然後再去「新增支出」重新輸入正確的。")
+            
+            # 製作一個選單，讓使用者選擇要刪除哪一筆 (顯示 日期-金額-備註)
+            # 這裡我們把 row_id 藏在選項的 key 裡
+            my_df['label'] = my_df['Date'].dt.strftime('%Y-%m-%d') + " | $" + my_df['Amount'].astype(int).astype(str) + " | " + my_df['Note']
+            
+            delete_target = st.selectbox("選擇要刪除的項目：", ["(請選擇)"] + my_df['label'].tolist())
+            
+            if delete_target != "(請選擇)":
+                # 找出那筆資料的 row_id
+                target_row = my_df[my_df['label'] == delete_target].iloc[0]
+                row_id_to_delete = target_row['row_id']
+                
+                if st.button(f"🗑️ 確定刪除：{delete_target}"):
+                    with st.spinner("正在刪除..."):
+                        delete_entry_from_cloud(row_id_to_delete)
+                    st.success("✅ 刪除成功！")
+                    st.cache_data.clear()
+                    st.rerun()
     else:
-        st.write("尚無資料")
+        st.warning("資料庫結構正在更新，或目前無資料。")
+
+# --- TAB 3: 總報表 (管理員限定) ---
+with tab3:
+    if is_admin:
+        # (這裡放原本的報表程式碼，稍微簡化顯示)
+        if df.empty:
+            st.info("無資料")
+        else:
+            total = df['Amount'].sum()
+            c1, c2 = st.columns(2)
+            c1.metric("公司總支出", f"${total:,.0f}")
+            # 依員工統計
+            if "User" in df.columns:
+                st.subheader("各員工申報總額")
+                user_sum = df.groupby("User")["Amount"].sum().reset_index()
+                st.bar_chart(user_sum, x="User", y="Amount")
+    else:
+        st.warning("🔒 需要管理員權限")
+
+# --- TAB 4: 總明細 (管理員限定) ---
+with tab4:
+    if is_admin:
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("🔒 需要管理員權限")
