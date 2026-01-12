@@ -11,7 +11,7 @@ import json
 SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 SHEET_NAME = "accounting_db" 
 
-st.set_page_config(page_title="公司財務戰情室 (個人管理版)", page_icon="🏢", layout="wide")
+st.set_page_config(page_title="Bluebulous財務戰情室", page_icon="🏢", layout="wide")
 
 # --- 2. 連線與資料處理 ---
 @st.cache_resource
@@ -111,7 +111,7 @@ with st.sidebar:
             st.rerun()
     elif admin_input: # <--- 新增這一段：如果有輸入內容，但上面沒通過
         st.error("❌ 密碼錯誤，請檢查 Secrets 設定") # <--- 跳出錯誤提示
-        
+
 # --- 4. 主畫面顯示邏輯 ---
 
 st.title("🏢 Bluebulous 記帳系統")
