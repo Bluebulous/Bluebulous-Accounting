@@ -98,16 +98,20 @@ with st.sidebar:
     else:
         correct_password = "admin" 
     
+    # ... (前面的程式碼) ...
+    
     admin_input = st.text_input("輸入密碼解鎖總報表", type="password")
     
     is_admin = False
     if admin_input == correct_password:
         is_admin = True
-        st.success("✅ 管理員模式已啟動")
+        st.success("✅ 管理員模式已啟動") # <--- 如果成功，會出現這個
         if st.button("🔄 強制重新整理資料"):
             st.cache_data.clear()
             st.rerun()
-
+    elif admin_input: # <--- 新增這一段：如果有輸入內容，但上面沒通過
+        st.error("❌ 密碼錯誤，請檢查 Secrets 設定") # <--- 跳出錯誤提示
+        
 # --- 4. 主畫面顯示邏輯 ---
 
 st.title("🏢 Bluebulous 記帳系統")
