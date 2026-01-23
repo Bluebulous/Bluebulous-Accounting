@@ -35,26 +35,20 @@ def connect_to_gsheets():
 def load_data():
     sheet = connect_to_gsheets()
     try:
-        # 使用 get_all_values 而不是 records，這樣才能確保我們掌握行數
         all_values = sheet.get_all_values()
         
         if len(all_values) < 2:
             return pd.DataFrame(columns=["Date", "Category", "Amount", "Note", "User", "row_id"])
         
-        # 第一列是標題，後面是資料
         header = all_values[0]
         data = all_values[1:]
         
         df = pd.DataFrame(data, columns=header)
-        
-        # ⚠️ 關鍵：加上「行號 (row_id)」
         df['row_id'] = range(2, len(df) + 2) 
 
-        # 格式轉換
         if 'Date' in df.columns:
             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         if 'Amount' in df.columns:
-             # 清除逗號並轉數字
              df['Amount'] = df['Amount'].astype(str).str.replace(',', '').apply(pd.to_numeric, errors='coerce').fillna(0)
              
         return df
@@ -80,15 +74,10 @@ employees = ["選擇您的名字...", "Yuri", "YT", "NiNi"]
 # ==========================================
 with st.sidebar:
     st.title("👤 身份設定")
-    
-    # 1. 選擇我是誰
     current_user = st.selectbox("請問您是哪一位？", employees)
-    
     st.markdown("---")
     
-    # 2. 管理員登入
     st.subheader("🔐 管理員專區")
-    
     if "admin_password" in st.secrets:
         correct_password = st.secrets["admin_password"]
     else:
@@ -116,7 +105,6 @@ if current_user == "選擇您的名字...":
 
 st.write(f"👋 您好，**{current_user}**！")
 
-# 分頁設定
 tab1, tab2, tab3, tab4 = st.tabs(["➕ 新增支出", "📝 我的紀錄 (可修改)", "📈 總報表 (限)", "📋 總明細 (限)"])
 
 # --- TAB 1: 新增支出 ---
@@ -139,30 +127,22 @@ with tab1:
             else:
                 st.error("金額必須大於 0")
 
-# --- TAB 2: 我的紀錄 (修正：顯示 User 欄位) ---
+# --- TAB 2: 我的紀錄 ---
 with tab2:
     st.header(f"📝 {current_user} 的記帳紀錄")
-    
     if not df.empty and "User" in df.columns:
         my_df = df[df["User"] == current_user].copy()
-        
         if my_df.empty:
             st.info("您目前還沒有輸入過任何資料。")
         else:
-            # 這裡加上了 "User" 欄位
             st.dataframe(my_df[["Date", "Category", "Amount", "Note", "User"]].sort_values(by="Date", ascending=False), use_container_width=True)
-            
             st.markdown("---")
             st.subheader("❌ 刪除/修改資料")
-            
             my_df['label'] = my_df['Date'].dt.strftime('%Y-%m-%d') + " | $" + my_df['Amount'].astype(int).astype(str) + " | " + my_df['Note']
-            
             delete_target = st.selectbox("選擇要刪除的項目：", ["(請選擇)"] + my_df['label'].tolist())
-            
             if delete_target != "(請選擇)":
                 target_row = my_df[my_df['label'] == delete_target].iloc[0]
                 row_id_to_delete = target_row['row_id']
-                
                 if st.button(f"🗑️ 確定刪除：{delete_target}"):
                     with st.spinner("正在刪除..."):
                         delete_entry_from_cloud(row_id_to_delete)
@@ -172,72 +152,73 @@ with tab2:
     else:
         st.warning("資料庫結構正在更新，或目前無資料。")
 
-# --- TAB 3: 總報表 (大改版：視覺化儀表板) ---
+# --- TAB 3: 總報表 (修正：本月支出 & X軸分類) ---
 with tab3:
     if is_admin:
         if df.empty:
             st.info("目前沒有資料，請先新增支出。")
         else:
-            # --- 0. 資料預處理 ---
-            # 建立一個 'YearMonth' 欄位方便按月統計 (例如 2024-01)
-            df['YearMonth'] = df['Date'].dt.to_period('M').astype(str)
+            # 建立 'YearMonth' 欄位
+            df['YearMonth'] = df['Date'].dt.strftime('%Y-%m') # 使用標準字串格式
             
-            # --- 1. 關鍵指標 (KPI) ---
+            # --- 計算 KPI ---
             total_exp = df['Amount'].sum()
             unique_months = df['YearMonth'].nunique()
             avg_monthly = total_exp / unique_months if unique_months > 0 else total_exp
+            
+            # 🔥 計算「本月支出」 (使用現在真實時間)
+            current_ym = datetime.now().strftime('%Y-%m')
+            # 篩選出 YearMonth 等於 現在月份 的資料
+            current_month_df = df[df['YearMonth'] == current_ym]
+            current_month_total = current_month_df['Amount'].sum()
             
             st.markdown("### 📊 財務關鍵指標")
             kpi1, kpi2, kpi3 = st.columns(3)
             kpi1.metric("💰 歷史總支出", f"${total_exp:,.0f}")
             kpi2.metric("📅 平均月支出", f"${avg_monthly:,.0f}")
-            kpi3.metric("📝 總筆數", f"{len(df)} 筆")
+            # 修改這裡：顯示本月支出
+            kpi3.metric(f"📆 本月支出 ({current_ym})", f"${current_month_total:,.0f}")
             
             st.markdown("---")
 
-            # --- 2. 圖表區 (上排) ---
             col1, col2 = st.columns(2)
             
             with col1:
                 st.subheader("1️⃣ 各類別支出佔比")
                 cat_sum = df.groupby("Category")["Amount"].sum().reset_index()
-                fig_pie = px.pie(cat_sum, values='Amount', names='Category', 
-                                 title='各類別支出分佈', 
-                                 hole=0.4) 
+                fig_pie = px.pie(cat_sum, values='Amount', names='Category', hole=0.4) 
                 fig_pie.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_pie, use_container_width=True)
             
             with col2:
                 st.subheader("2️⃣ 每月總支出趨勢")
                 monthly_total = df.groupby('YearMonth')['Amount'].sum().reset_index()
-                fig_line = px.line(monthly_total, x='YearMonth', y='Amount', 
-                                   title='每月總支出變化', markers=True)
+                fig_line = px.line(monthly_total, x='YearMonth', y='Amount', markers=True)
+                # 🔥 關鍵修正：強制 X 軸為分類模式 (category)，避免被當成連續日期
+                fig_line.update_xaxes(type='category')
                 fig_line.update_layout(xaxis_title="月份", yaxis_title="金額")
                 st.plotly_chart(fig_line, use_container_width=True)
 
             st.markdown("---")
 
-            # --- 3. 圖表區 (下排) ---
             st.subheader("3️⃣ 各類別每月詳細分析")
-            
             monthly_cat = df.groupby(['YearMonth', 'Category'])['Amount'].sum().reset_index()
-            
             chart_type = st.radio("選擇圖表類型：", ["折線圖 (比較趨勢)", "堆疊長條圖 (比較結構)"], horizontal=True)
             
             if "折線圖" in chart_type:
-                fig_multi = px.line(monthly_cat, x='YearMonth', y='Amount', color='Category',
-                                    title='同種類支出在不同月份的變化', markers=True)
+                fig_multi = px.line(monthly_cat, x='YearMonth', y='Amount', color='Category', markers=True)
             else:
-                fig_multi = px.bar(monthly_cat, x='YearMonth', y='Amount', color='Category',
-                                   title='每月支出結構分析')
+                fig_multi = px.bar(monthly_cat, x='YearMonth', y='Amount', color='Category')
 
+            # 🔥 關鍵修正：這裡也要強制 X 軸為分類模式
+            fig_multi.update_xaxes(type='category')
             fig_multi.update_layout(xaxis_title="月份", yaxis_title="金額")
             st.plotly_chart(fig_multi, use_container_width=True)
 
     else:
         st.warning("🔒 這是公司機密數據，請輸入管理員密碼解鎖。")
 
-# --- TAB 4: 總明細 (管理員限定) ---
+# --- TAB 4: 總明細 ---
 with tab4:
     if is_admin:
         st.dataframe(df.sort_values(by="Date", ascending=False), use_container_width=True)
