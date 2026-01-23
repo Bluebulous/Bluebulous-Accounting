@@ -48,8 +48,6 @@ def load_data():
         df = pd.DataFrame(data, columns=header)
         
         # ⚠️ 關鍵：加上「行號 (row_id)」
-        # Excel 表格中，標題是第1行，第一筆資料是第2行。
-        # Python 的 index 是從 0 開始，所以第一筆資料 index 0 對應 Excel 的 Row 2
         df['row_id'] = range(2, len(df) + 2) 
 
         # 格式轉換
@@ -66,7 +64,6 @@ def load_data():
 def save_entry_to_cloud(date, category, amount, note, user):
     sheet = connect_to_gsheets()
     date_str = date.strftime("%Y-%m-%d")
-    # 把使用者名稱 (user) 也存進去
     sheet.append_row([date_str, category, amount, note, user])
 
 def delete_entry_from_cloud(row_id):
@@ -76,7 +73,6 @@ def delete_entry_from_cloud(row_id):
 # --- 3. 初始化資料 ---
 df = load_data()
 categories = ["進貨成本", "運費", "行銷廣告", "交通差旅", "辦公雜項", "租金貸款", "營業稅＆其他稅務", "交際費", "軟體系統使用費", "薪資人事費"]
-# 定義員工名單 (您可以隨時在這裡增加名字)
 employees = ["選擇您的名字...", "Yuri", "YT", "NiNi"]
 
 # ==========================================
@@ -90,7 +86,7 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # 2. 管理員登入 (只有老闆要用)
+    # 2. 管理員登入
     st.subheader("🔐 管理員專區")
     
     if "admin_password" in st.secrets:
@@ -98,19 +94,17 @@ with st.sidebar:
     else:
         correct_password = "admin" 
     
-    # ... (前面的程式碼) ...
-    
     admin_input = st.text_input("輸入密碼解鎖總報表", type="password")
     
     is_admin = False
     if admin_input == correct_password:
         is_admin = True
-        st.success("✅ 管理員模式已啟動") # <--- 如果成功，會出現這個
+        st.success("✅ 管理員模式已啟動")
         if st.button("🔄 強制重新整理資料"):
             st.cache_data.clear()
             st.rerun()
-    elif admin_input: # <--- 新增這一段：如果有輸入內容，但上面沒通過
-        st.error("❌ 密碼錯誤，請檢查 Secrets 設定") # <--- 跳出錯誤提示
+    elif admin_input: 
+        st.error("❌ 密碼錯誤") 
 
 # --- 4. 主畫面顯示邏輯 ---
 
@@ -118,14 +112,14 @@ st.title("🏢 Bluebulous 記帳系統")
 
 if current_user == "選擇您的名字...":
     st.info("👈 請先在左側選單選擇您的名字，才能開始記帳。")
-    st.stop() # 暫停執行下面的程式，直到選了名字
+    st.stop() 
 
 st.write(f"👋 您好，**{current_user}**！")
 
 # 分頁設定
 tab1, tab2, tab3, tab4 = st.tabs(["➕ 新增支出", "📝 我的紀錄 (可修改)", "📈 總報表 (限)", "📋 總明細 (限)"])
 
-# --- TAB 1: 新增支出 (自動帶入名字) ---
+# --- TAB 1: 新增支出 ---
 with tab1:
     st.header("新增一筆紀錄")
     with st.form("cloud_entry", clear_on_submit=True):
@@ -138,7 +132,6 @@ with tab1:
         if submitted:
             if a > 0:
                 with st.spinner("正在寫入雲端..."):
-                    # 這裡把 current_user 傳進去
                     save_entry_to_cloud(d, c, a, n, current_user)
                 st.success("✅ 資料已儲存！")
                 st.cache_data.clear()
@@ -146,32 +139,27 @@ with tab1:
             else:
                 st.error("金額必須大於 0")
 
-# --- TAB 2: 我的紀錄 (只看得到自己的，且可刪除) ---
+# --- TAB 2: 我的紀錄 (修正：顯示 User 欄位) ---
 with tab2:
     st.header(f"📝 {current_user} 的記帳紀錄")
     
     if not df.empty and "User" in df.columns:
-        # 篩選：只抓出 User 欄位等於 current_user 的資料
         my_df = df[df["User"] == current_user].copy()
         
         if my_df.empty:
             st.info("您目前還沒有輸入過任何資料。")
         else:
-            # 顯示表格
-            st.dataframe(my_df[["Date", "Category", "Amount", "Note"]].sort_values(by="Date", ascending=False), use_container_width=True)
+            # 這裡加上了 "User" 欄位
+            st.dataframe(my_df[["Date", "Category", "Amount", "Note", "User"]].sort_values(by="Date", ascending=False), use_container_width=True)
             
             st.markdown("---")
             st.subheader("❌ 刪除/修改資料")
-            st.caption("如果您輸入錯誤，請在這裡選取該筆資料並刪除，然後再去「新增支出」重新輸入正確的。")
             
-            # 製作一個選單，讓使用者選擇要刪除哪一筆 (顯示 日期-金額-備註)
-            # 這裡我們把 row_id 藏在選項的 key 裡
             my_df['label'] = my_df['Date'].dt.strftime('%Y-%m-%d') + " | $" + my_df['Amount'].astype(int).astype(str) + " | " + my_df['Note']
             
             delete_target = st.selectbox("選擇要刪除的項目：", ["(請選擇)"] + my_df['label'].tolist())
             
             if delete_target != "(請選擇)":
-                # 找出那筆資料的 row_id
                 target_row = my_df[my_df['label'] == delete_target].iloc[0]
                 row_id_to_delete = target_row['row_id']
                 
@@ -184,27 +172,74 @@ with tab2:
     else:
         st.warning("資料庫結構正在更新，或目前無資料。")
 
-# --- TAB 3: 總報表 (管理員限定) ---
+# --- TAB 3: 總報表 (大改版：視覺化儀表板) ---
 with tab3:
     if is_admin:
-        # (這裡放原本的報表程式碼，稍微簡化顯示)
         if df.empty:
-            st.info("無資料")
+            st.info("目前沒有資料，請先新增支出。")
         else:
-            total = df['Amount'].sum()
-            c1, c2 = st.columns(2)
-            c1.metric("公司總支出", f"${total:,.0f}")
-            # 依員工統計
-            if "User" in df.columns:
-                st.subheader("各員工申報總額")
-                user_sum = df.groupby("User")["Amount"].sum().reset_index()
-                st.bar_chart(user_sum, x="User", y="Amount")
+            # --- 0. 資料預處理 ---
+            # 建立一個 'YearMonth' 欄位方便按月統計 (例如 2024-01)
+            df['YearMonth'] = df['Date'].dt.to_period('M').astype(str)
+            
+            # --- 1. 關鍵指標 (KPI) ---
+            total_exp = df['Amount'].sum()
+            unique_months = df['YearMonth'].nunique()
+            avg_monthly = total_exp / unique_months if unique_months > 0 else total_exp
+            
+            st.markdown("### 📊 財務關鍵指標")
+            kpi1, kpi2, kpi3 = st.columns(3)
+            kpi1.metric("💰 歷史總支出", f"${total_exp:,.0f}")
+            kpi2.metric("📅 平均月支出", f"${avg_monthly:,.0f}")
+            kpi3.metric("📝 總筆數", f"{len(df)} 筆")
+            
+            st.markdown("---")
+
+            # --- 2. 圖表區 (上排) ---
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("1️⃣ 各類別支出佔比")
+                cat_sum = df.groupby("Category")["Amount"].sum().reset_index()
+                fig_pie = px.pie(cat_sum, values='Amount', names='Category', 
+                                 title='各類別支出分佈', 
+                                 hole=0.4) 
+                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_pie, use_container_width=True)
+            
+            with col2:
+                st.subheader("2️⃣ 每月總支出趨勢")
+                monthly_total = df.groupby('YearMonth')['Amount'].sum().reset_index()
+                fig_line = px.line(monthly_total, x='YearMonth', y='Amount', 
+                                   title='每月總支出變化', markers=True)
+                fig_line.update_layout(xaxis_title="月份", yaxis_title="金額")
+                st.plotly_chart(fig_line, use_container_width=True)
+
+            st.markdown("---")
+
+            # --- 3. 圖表區 (下排) ---
+            st.subheader("3️⃣ 各類別每月詳細分析")
+            
+            monthly_cat = df.groupby(['YearMonth', 'Category'])['Amount'].sum().reset_index()
+            
+            chart_type = st.radio("選擇圖表類型：", ["折線圖 (比較趨勢)", "堆疊長條圖 (比較結構)"], horizontal=True)
+            
+            if "折線圖" in chart_type:
+                fig_multi = px.line(monthly_cat, x='YearMonth', y='Amount', color='Category',
+                                    title='同種類支出在不同月份的變化', markers=True)
+            else:
+                fig_multi = px.bar(monthly_cat, x='YearMonth', y='Amount', color='Category',
+                                   title='每月支出結構分析')
+
+            fig_multi.update_layout(xaxis_title="月份", yaxis_title="金額")
+            st.plotly_chart(fig_multi, use_container_width=True)
+
     else:
-        st.warning("🔒 需要管理員權限")
+        st.warning("🔒 這是公司機密數據，請輸入管理員密碼解鎖。")
 
 # --- TAB 4: 總明細 (管理員限定) ---
 with tab4:
     if is_admin:
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df.sort_values(by="Date", ascending=False), use_container_width=True)
     else:
         st.warning("🔒 需要管理員權限")
