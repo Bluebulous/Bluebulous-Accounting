@@ -167,7 +167,7 @@ with tab1:
             else:
                 st.error("金額必須大於 0")
 
-# --- TAB 2: 我的紀錄 (🔥 點擊表格直接編輯) ---
+# --- TAB 2: 我的紀錄 (點擊表格直接編輯) ---
 with tab2:
     st.header(f"📝 {current_user} 的記帳紀錄")
     if not df.empty and "User" in df.columns:
@@ -177,25 +177,21 @@ with tab2:
         else:
             st.write("👇 **請直接在下方表格中，點擊您要修改的那一列：**")
             
-            # 確保資料依日期排序，並重置 index (為了正確抓取點擊的行號)
             my_df_sorted = my_df.sort_values(by="Date", ascending=False).reset_index(drop=True)
             
-            # 顯示互動式表格
             event = st.dataframe(
                 my_df_sorted[["Date", "Category", "Amount", "Note"]],
                 use_container_width=True,
-                on_select="rerun",           # 點擊時重新載入
-                selection_mode="single-row"  # 限制只能單選一行
+                on_select="rerun",           
+                selection_mode="single-row"  
             )
             
-            # 檢查是否有行被選取
             selected_rows = event.selection.rows
             
             if selected_rows:
                 st.markdown("---")
                 st.subheader("✏️ 編輯選取的資料")
                 
-                # 抓取被點擊的那一行資料
                 selected_index = selected_rows[0]
                 target_row = my_df_sorted.iloc[selected_index]
                 row_id = target_row['row_id']
@@ -273,64 +269,87 @@ with tab3:
     else:
         st.warning("🔒 這是公司機密數據，請輸入管理員密碼解鎖。")
 
-# --- TAB 4: 總明細與管理 (🔥 點擊表格直接編輯) ---
+# --- TAB 4: 總明細與管理 (🔥 加入篩選器) ---
 with tab4:
     if is_admin:
         st.subheader("👑 管理員專用：修改 / 刪除歷史資料")
         
         if not df.empty:
-            st.write("👇 **請直接在下方表格中，點擊您要修改的那一列：**")
             
-            # 排序並重置 index
-            admin_df_sorted = df.sort_values(by="Date", ascending=False).reset_index(drop=True)
+            # --- 🔍 新增：資料篩選器 ---
+            st.write("📌 **篩選條件設定：**")
+            c_filter1, c_filter2 = st.columns(2)
+            with c_filter1:
+                filter_cat = st.selectbox("📂 依類別篩選", ["全部"] + categories)
+            with c_filter2:
+                valid_users = employees[1:] # 排除"選擇您的名字"
+                filter_user = st.selectbox("👤 依填表人篩選", ["全部"] + valid_users)
             
-            # 顯示互動式表格
-            admin_event = st.dataframe(
-                admin_df_sorted[["Date", "User", "Category", "Amount", "Note"]],
-                use_container_width=True,
-                on_select="rerun",
-                selection_mode="single-row"
-            )
+            # 複製一份資料來做篩選
+            admin_df_filtered = df.copy()
             
-            admin_selected_rows = admin_event.selection.rows
+            # 執行篩選邏輯
+            if filter_cat != "全部":
+                admin_df_filtered = admin_df_filtered[admin_df_filtered['Category'] == filter_cat]
+            if filter_user != "全部":
+                admin_df_filtered = admin_df_filtered[admin_df_filtered['User'] == filter_user]
             
-            if admin_selected_rows:
-                st.markdown("---")
-                st.subheader("✏️ 編輯選取的資料")
-                
-                target_row = admin_df_sorted.iloc[admin_selected_rows[0]]
-                row_id = target_row['row_id']
-                
-                c1, c2 = st.columns(2)
-                with c1:
-                    edit_date = st.date_input("日期", target_row['Date'], key="a_date")
-                    cat_idx = categories.index(target_row['Category']) if target_row['Category'] in categories else 0
-                    edit_category = st.selectbox("類別", categories, index=cat_idx, key="a_cat")
-                    
-                    valid_employees = employees[1:]
-                    user_idx = valid_employees.index(target_row['User']) if target_row['User'] in valid_employees else 0
-                    edit_user = st.selectbox("填表人", valid_employees, index=user_idx, key="a_user")
-                with c2:
-                    edit_amount = st.number_input("金額", min_value=0, step=100, value=int(target_row['Amount']), key="a_amt")
-                    edit_note = st.text_input("備註", str(target_row['Note']), key="a_note")
-                
-                btn1, btn2 = st.columns(2)
-                with btn1:
-                    if st.button("💾 強制儲存修改", use_container_width=True, type="primary"):
-                        with st.spinner("正在更新..."):
-                            update_entry_in_cloud(row_id, edit_date, edit_category, edit_amount, edit_note, edit_user)
-                        st.success("✅ 修改成功！")
-                        st.cache_data.clear()
-                        st.rerun()
-                with btn2:
-                    if st.button("🗑️ 強制刪除此筆", use_container_width=True):
-                        with st.spinner("正在刪除..."):
-                            delete_entry_from_cloud(row_id)
-                        st.success("✅ 刪除成功！")
-                        st.cache_data.clear()
-                        st.rerun()
+            # 排序並重置 index (極度重要，避免選取錯亂)
+            admin_df_sorted = admin_df_filtered.sort_values(by="Date", ascending=False).reset_index(drop=True)
+            
+            st.markdown("---")
+            
+            if admin_df_sorted.empty:
+                st.info("⚠️ 找不到符合此篩選條件的紀錄。")
             else:
-                st.info("👆 點擊上方表格中的任意一筆紀錄，即可展開修改選單。")
+                st.write("👇 **請直接在下方表格中，點擊您要修改的那一列：**")
+                
+                # 顯示互動式表格
+                admin_event = st.dataframe(
+                    admin_df_sorted[["Date", "User", "Category", "Amount", "Note"]],
+                    use_container_width=True,
+                    on_select="rerun",
+                    selection_mode="single-row"
+                )
+                
+                admin_selected_rows = admin_event.selection.rows
+                
+                if admin_selected_rows:
+                    st.markdown("---")
+                    st.subheader("✏️ 編輯選取的資料")
+                    
+                    target_row = admin_df_sorted.iloc[admin_selected_rows[0]]
+                    row_id = target_row['row_id']
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        edit_date = st.date_input("日期", target_row['Date'], key="a_date")
+                        cat_idx = categories.index(target_row['Category']) if target_row['Category'] in categories else 0
+                        edit_category = st.selectbox("類別", categories, index=cat_idx, key="a_cat")
+                        
+                        user_idx = valid_users.index(target_row['User']) if target_row['User'] in valid_users else 0
+                        edit_user = st.selectbox("填表人", valid_users, index=user_idx, key="a_user")
+                    with c2:
+                        edit_amount = st.number_input("金額", min_value=0, step=100, value=int(target_row['Amount']), key="a_amt")
+                        edit_note = st.text_input("備註", str(target_row['Note']), key="a_note")
+                    
+                    btn1, btn2 = st.columns(2)
+                    with btn1:
+                        if st.button("💾 強制儲存修改", use_container_width=True, type="primary"):
+                            with st.spinner("正在更新..."):
+                                update_entry_in_cloud(row_id, edit_date, edit_category, edit_amount, edit_note, edit_user)
+                            st.success("✅ 修改成功！")
+                            st.cache_data.clear()
+                            st.rerun()
+                    with btn2:
+                        if st.button("🗑️ 強制刪除此筆", use_container_width=True):
+                            with st.spinner("正在刪除..."):
+                                delete_entry_from_cloud(row_id)
+                            st.success("✅ 刪除成功！")
+                            st.cache_data.clear()
+                            st.rerun()
+                else:
+                    st.info("👆 點擊上方表格中的任意一筆紀錄，即可展開修改選單。")
 
         # 動態新增類別
         st.markdown("---")
