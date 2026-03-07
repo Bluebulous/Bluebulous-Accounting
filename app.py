@@ -22,6 +22,9 @@ def connect_to_gsheets():
         elif "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
             creds = ServiceAccountCredentials.from_json_keyfile_dict(key_dict, SCOPE)
+        elif os.environ.get("GCP_JSON"): # 支援 Render 的環境變數寫法
+            key_dict = json.loads(os.environ.get("GCP_JSON"))
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(key_dict, SCOPE)
         else:
             st.error("找不到金鑰！")
             st.stop()
@@ -64,6 +67,17 @@ def delete_entry_from_cloud(row_id):
     sheet = connect_to_gsheets()
     sheet.delete_rows(int(row_id))
 
+# 🔥 新增：更新雲端資料的函數
+def update_entry_in_cloud(row_id, date, category, amount, note, user):
+    sheet = connect_to_gsheets()
+    date_str = date.strftime("%Y-%m-%d")
+    # 抓取該行的 A 到 E 欄，並一次性覆蓋更新 (節省 API 呼叫次數)
+    cell_list = sheet.range(f"A{row_id}:E{row_id}")
+    values = [date_str, category, amount, note, user]
+    for i, val in enumerate(values):
+        cell_list[i].value = val
+    sheet.update_cells(cell_list)
+
 # --- 3. 初始化資料 ---
 df = load_data()
 categories = ["進貨成本", "運費", "行銷廣告", "交通差旅", "辦公雜項", "租金貸款", "營業稅＆其他稅務", "交際費", "軟體系統使用費", "薪資人事費"]
@@ -78,8 +92,12 @@ with st.sidebar:
     st.markdown("---")
     
     st.subheader("🔐 管理員專區")
+    
+    # 支援 Streamlit Secrets 或 Render 環境變數
     if "admin_password" in st.secrets:
         correct_password = st.secrets["admin_password"]
+    elif os.environ.get("admin_password"):
+        correct_password = os.environ.get("admin_password")
     else:
         correct_password = "admin" 
     
@@ -105,7 +123,7 @@ if current_user == "選擇您的名字...":
 
 st.write(f"👋 您好，**{current_user}**！")
 
-tab1, tab2, tab3, tab4 = st.tabs(["➕ 新增支出", "📝 我的紀錄 (可修改)", "📈 總報表 (限)", "📋 總明細 (限)"])
+tab1, tab2, tab3, tab4 = st.tabs(["➕ 新增支出", "📝 我的紀錄 (可修改)", "📈 總報表 (限)", "📋 總明細與管理 (限)"])
 
 # --- TAB 1: 新增支出 ---
 with tab1:
@@ -152,23 +170,19 @@ with tab2:
     else:
         st.warning("資料庫結構正在更新，或目前無資料。")
 
-# --- TAB 3: 總報表 (修正：本月支出 & X軸分類) ---
+# --- TAB 3: 總報表 ---
 with tab3:
     if is_admin:
         if df.empty:
             st.info("目前沒有資料，請先新增支出。")
         else:
-            # 建立 'YearMonth' 欄位
-            df['YearMonth'] = df['Date'].dt.strftime('%Y-%m') # 使用標準字串格式
+            df['YearMonth'] = df['Date'].dt.strftime('%Y-%m') 
             
-            # --- 計算 KPI ---
             total_exp = df['Amount'].sum()
             unique_months = df['YearMonth'].nunique()
             avg_monthly = total_exp / unique_months if unique_months > 0 else total_exp
             
-            # 🔥 計算「本月支出」 (使用現在真實時間)
             current_ym = datetime.now().strftime('%Y-%m')
-            # 篩選出 YearMonth 等於 現在月份 的資料
             current_month_df = df[df['YearMonth'] == current_ym]
             current_month_total = current_month_df['Amount'].sum()
             
@@ -176,7 +190,6 @@ with tab3:
             kpi1, kpi2, kpi3 = st.columns(3)
             kpi1.metric("💰 歷史總支出", f"${total_exp:,.0f}")
             kpi2.metric("📅 平均月支出", f"${avg_monthly:,.0f}")
-            # 修改這裡：顯示本月支出
             kpi3.metric(f"📆 本月支出 ({current_ym})", f"${current_month_total:,.0f}")
             
             st.markdown("---")
@@ -194,7 +207,6 @@ with tab3:
                 st.subheader("2️⃣ 每月總支出趨勢")
                 monthly_total = df.groupby('YearMonth')['Amount'].sum().reset_index()
                 fig_line = px.line(monthly_total, x='YearMonth', y='Amount', markers=True)
-                # 🔥 關鍵修正：強制 X 軸為分類模式 (category)，避免被當成連續日期
                 fig_line.update_xaxes(type='category')
                 fig_line.update_layout(xaxis_title="月份", yaxis_title="金額")
                 st.plotly_chart(fig_line, use_container_width=True)
@@ -210,7 +222,6 @@ with tab3:
             else:
                 fig_multi = px.bar(monthly_cat, x='YearMonth', y='Amount', color='Category')
 
-            # 🔥 關鍵修正：這裡也要強制 X 軸為分類模式
             fig_multi.update_xaxes(type='category')
             fig_multi.update_layout(xaxis_title="月份", yaxis_title="金額")
             st.plotly_chart(fig_multi, use_container_width=True)
@@ -218,9 +229,55 @@ with tab3:
     else:
         st.warning("🔒 這是公司機密數據，請輸入管理員密碼解鎖。")
 
-# --- TAB 4: 總明細 ---
+# --- TAB 4: 總明細與管理 (大改版：加入編輯器) ---
 with tab4:
     if is_admin:
+        st.subheader("📋 所有紀錄明細")
         st.dataframe(df.sort_values(by="Date", ascending=False), use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("✏️ 修改 / 編輯歷史資料")
+        st.caption("請從下方選單選擇要修改的資料，確認後點擊儲存。")
+        
+        if not df.empty:
+            edit_df = df.copy()
+            # 建立選單標籤 (為了讓管理員好辨識是哪一筆)
+            edit_df['label'] = edit_df['Date'].dt.strftime('%Y-%m-%d') + " | " + edit_df['User'].astype(str) + " | " + edit_df['Category'] + " | $" + edit_df['Amount'].astype(int).astype(str) + " | " + edit_df['Note'].astype(str)
+            
+            edit_target = st.selectbox("選擇要修改的項目：", ["(請選擇)"] + edit_df['label'].tolist())
+            
+            if edit_target != "(請選擇)":
+                # 找出被選中的那筆資料
+                target_row = edit_df[edit_df['label'] == edit_target].iloc[0]
+                row_id_to_edit = target_row['row_id']
+                
+                # 顯示編輯表單，並預先填入原本的資料
+                with st.form("edit_form"):
+                    st.write(f"正在編輯：**{target_row['User']}** 於 **{target_row['Date'].strftime('%Y-%m-%d')}** 輸入的資料")
+                    
+                    edit_date = st.date_input("日期", target_row['Date'])
+                    
+                    # 避免資料庫舊類別不在現有清單中而報錯
+                    cat_index = categories.index(target_row['Category']) if target_row['Category'] in categories else 0
+                    edit_category = st.selectbox("類別", categories, index=cat_index)
+                    
+                    edit_amount = st.number_input("金額", min_value=0, step=100, value=int(target_row['Amount']))
+                    edit_note = st.text_input("備註", str(target_row['Note']))
+                    
+                    # 員工清單 (排除第一個"選擇您的名字...")
+                    valid_employees = employees[1:]
+                    user_index = valid_employees.index(target_row['User']) if target_row['User'] in valid_employees else 0
+                    edit_user = st.selectbox("填表人", valid_employees, index=user_index)
+                    
+                    submit_edit = st.form_submit_button("💾 儲存修改至雲端")
+                    
+                    if submit_edit:
+                        with st.spinner("正在更新資料庫..."):
+                            update_entry_in_cloud(row_id_to_edit, edit_date, edit_category, edit_amount, edit_note, edit_user)
+                        st.success("✅ 資料已成功修改！")
+                        st.cache_data.clear()
+                        st.rerun()
+        else:
+            st.info("目前沒有資料可供修改。")
     else:
         st.warning("🔒 需要管理員權限")
