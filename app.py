@@ -9,7 +9,7 @@ import json
 
 # --- 1. 設定區 ---
 SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-SHEET_NAME = "accounting_db" 
+SHEET_ID = "1ot_AycCO1GEqqGsEXMWjEAuFsZJZ1OSz"
 
 st.set_page_config(page_title="Bluebulous財務戰情室", page_icon="🏢", layout="wide")
 
@@ -29,7 +29,7 @@ def connect_to_gsheets():
             st.error("找不到金鑰！")
             st.stop()
         client = gspread.authorize(creds)
-        return client.open(SHEET_NAME)
+        return client.open_by_key(SHEET_ID)
     except Exception as e:
         st.error(f"❌ 無法連接 Google Sheets: {e}")
         st.stop()
