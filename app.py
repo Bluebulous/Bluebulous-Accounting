@@ -22,7 +22,7 @@ def connect_to_gsheets():
         elif "gcp_service_account" in st.secrets:
             key_dict = dict(st.secrets["gcp_service_account"])
             creds = ServiceAccountCredentials.from_json_keyfile_dict(key_dict, SCOPE)
-        elif os.environ.get("GCP_JSON"): # 支援 Render 的環境變數寫法
+        elif os.environ.get("GCP_JSON"): 
             key_dict = json.loads(os.environ.get("GCP_JSON"))
             creds = ServiceAccountCredentials.from_json_keyfile_dict(key_dict, SCOPE)
         else:
@@ -39,13 +39,11 @@ def load_data():
     sheet = connect_to_gsheets()
     try:
         all_values = sheet.get_all_values()
-        
         if len(all_values) < 2:
             return pd.DataFrame(columns=["Date", "Category", "Amount", "Note", "User", "row_id"])
         
         header = all_values[0]
         data = all_values[1:]
-        
         df = pd.DataFrame(data, columns=header)
         df['row_id'] = range(2, len(df) + 2) 
 
@@ -67,11 +65,9 @@ def delete_entry_from_cloud(row_id):
     sheet = connect_to_gsheets()
     sheet.delete_rows(int(row_id))
 
-# 🔥 新增：更新雲端資料的函數
 def update_entry_in_cloud(row_id, date, category, amount, note, user):
     sheet = connect_to_gsheets()
     date_str = date.strftime("%Y-%m-%d")
-    # 抓取該行的 A 到 E 欄，並一次性覆蓋更新 (節省 API 呼叫次數)
     cell_list = sheet.range(f"A{row_id}:E{row_id}")
     values = [date_str, category, amount, note, user]
     for i, val in enumerate(values):
@@ -90,10 +86,8 @@ with st.sidebar:
     st.title("👤 身份設定")
     current_user = st.selectbox("請問您是哪一位？", employees)
     st.markdown("---")
-    
     st.subheader("🔐 管理員專區")
     
-    # 支援 Streamlit Secrets 或 Render 環境變數
     if "admin_password" in st.secrets:
         correct_password = st.secrets["admin_password"]
     elif os.environ.get("admin_password"):
@@ -102,7 +96,6 @@ with st.sidebar:
         correct_password = "admin" 
     
     admin_input = st.text_input("輸入密碼解鎖總報表", type="password")
-    
     is_admin = False
     if admin_input == correct_password:
         is_admin = True
@@ -123,7 +116,7 @@ if current_user == "選擇您的名字...":
 
 st.write(f"👋 您好，**{current_user}**！")
 
-tab1, tab2, tab3, tab4 = st.tabs(["➕ 新增支出", "📝 我的紀錄 (可修改)", "📈 總報表 (限)", "📋 總明細與管理 (限)"])
+tab1, tab2, tab3, tab4 = st.tabs(["➕ 新增支出", "📝 我的紀錄 (編輯/刪除)", "📈 總報表 (限)", "📋 總明細與管理 (限)"])
 
 # --- TAB 1: 新增支出 ---
 with tab1:
@@ -134,8 +127,7 @@ with tab1:
         c = st.selectbox("類別", categories)
         n = st.text_input("備註")
         
-        submitted = st.form_submit_button("☁️ 上傳資料")
-        if submitted:
+        if st.form_submit_button("☁️ 上傳資料"):
             if a > 0:
                 with st.spinner("正在寫入雲端..."):
                     save_entry_to_cloud(d, c, a, n, current_user)
@@ -145,7 +137,7 @@ with tab1:
             else:
                 st.error("金額必須大於 0")
 
-# --- TAB 2: 我的紀錄 ---
+# --- TAB 2: 我的紀錄 (🔥大改版：加入修改功能) ---
 with tab2:
     st.header(f"📝 {current_user} 的記帳紀錄")
     if not df.empty and "User" in df.columns:
@@ -153,20 +145,47 @@ with tab2:
         if my_df.empty:
             st.info("您目前還沒有輸入過任何資料。")
         else:
-            st.dataframe(my_df[["Date", "Category", "Amount", "Note", "User"]].sort_values(by="Date", ascending=False), use_container_width=True)
+            st.dataframe(my_df[["Date", "Category", "Amount", "Note"]].sort_values(by="Date", ascending=False), use_container_width=True)
             st.markdown("---")
-            st.subheader("❌ 刪除/修改資料")
-            my_df['label'] = my_df['Date'].dt.strftime('%Y-%m-%d') + " | $" + my_df['Amount'].astype(int).astype(str) + " | " + my_df['Note']
-            delete_target = st.selectbox("選擇要刪除的項目：", ["(請選擇)"] + my_df['label'].tolist())
-            if delete_target != "(請選擇)":
-                target_row = my_df[my_df['label'] == delete_target].iloc[0]
-                row_id_to_delete = target_row['row_id']
-                if st.button(f"🗑️ 確定刪除：{delete_target}"):
-                    with st.spinner("正在刪除..."):
-                        delete_entry_from_cloud(row_id_to_delete)
-                    st.success("✅ 刪除成功！")
-                    st.cache_data.clear()
-                    st.rerun()
+            st.subheader("✏️ 修改或刪除資料")
+            
+            my_df['label'] = my_df['Date'].dt.strftime('%Y-%m-%d') + " | " + my_df['Category'] + " | $" + my_df['Amount'].astype(int).astype(str) + " | " + my_df['Note']
+            
+            # 選擇要修改的項目
+            target = st.selectbox("請選擇要修改/刪除的項目：", ["(請選擇)"] + my_df['label'].tolist(), key="user_edit_select")
+            
+            if target != "(請選擇)":
+                target_row = my_df[my_df['label'] == target].iloc[0]
+                row_id = target_row['row_id']
+                
+                st.info("👇 請在下方修改內容並儲存，或直接刪除此筆資料。")
+                
+                # 顯示輸入框讓使用者修改
+                c1, c2 = st.columns(2)
+                with c1:
+                    edit_date = st.date_input("修改日期", target_row['Date'], key="u_date")
+                    cat_idx = categories.index(target_row['Category']) if target_row['Category'] in categories else 0
+                    edit_category = st.selectbox("修改類別", categories, index=cat_idx, key="u_cat")
+                with c2:
+                    edit_amount = st.number_input("修改金額", min_value=0, step=100, value=int(target_row['Amount']), key="u_amt")
+                    edit_note = st.text_input("修改備註", str(target_row['Note']), key="u_note")
+                
+                # 並排顯示「儲存」與「刪除」按鈕
+                btn1, btn2 = st.columns(2)
+                with btn1:
+                    if st.button("💾 儲存修改內容", use_container_width=True, type="primary"):
+                        with st.spinner("正在更新雲端資料庫..."):
+                            update_entry_in_cloud(row_id, edit_date, edit_category, edit_amount, edit_note, current_user)
+                        st.success("✅ 修改成功！")
+                        st.cache_data.clear()
+                        st.rerun()
+                with btn2:
+                    if st.button("🗑️ 整筆刪除", use_container_width=True):
+                        with st.spinner("正在刪除..."):
+                            delete_entry_from_cloud(row_id)
+                        st.success("✅ 刪除成功！")
+                        st.cache_data.clear()
+                        st.rerun()
     else:
         st.warning("資料庫結構正在更新，或目前無資料。")
 
@@ -174,110 +193,91 @@ with tab2:
 with tab3:
     if is_admin:
         if df.empty:
-            st.info("目前沒有資料，請先新增支出。")
+            st.info("目前沒有資料。")
         else:
             df['YearMonth'] = df['Date'].dt.strftime('%Y-%m') 
-            
             total_exp = df['Amount'].sum()
             unique_months = df['YearMonth'].nunique()
             avg_monthly = total_exp / unique_months if unique_months > 0 else total_exp
             
             current_ym = datetime.now().strftime('%Y-%m')
-            current_month_df = df[df['YearMonth'] == current_ym]
-            current_month_total = current_month_df['Amount'].sum()
+            current_month_total = df[df['YearMonth'] == current_ym]['Amount'].sum()
             
-            st.markdown("### 📊 財務關鍵指標")
             kpi1, kpi2, kpi3 = st.columns(3)
             kpi1.metric("💰 歷史總支出", f"${total_exp:,.0f}")
             kpi2.metric("📅 平均月支出", f"${avg_monthly:,.0f}")
             kpi3.metric(f"📆 本月支出 ({current_ym})", f"${current_month_total:,.0f}")
             
             st.markdown("---")
-
             col1, col2 = st.columns(2)
-            
             with col1:
-                st.subheader("1️⃣ 各類別支出佔比")
                 cat_sum = df.groupby("Category")["Amount"].sum().reset_index()
                 fig_pie = px.pie(cat_sum, values='Amount', names='Category', hole=0.4) 
                 fig_pie.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_pie, use_container_width=True)
-            
             with col2:
-                st.subheader("2️⃣ 每月總支出趨勢")
                 monthly_total = df.groupby('YearMonth')['Amount'].sum().reset_index()
                 fig_line = px.line(monthly_total, x='YearMonth', y='Amount', markers=True)
                 fig_line.update_xaxes(type='category')
-                fig_line.update_layout(xaxis_title="月份", yaxis_title="金額")
                 st.plotly_chart(fig_line, use_container_width=True)
 
             st.markdown("---")
-
-            st.subheader("3️⃣ 各類別每月詳細分析")
             monthly_cat = df.groupby(['YearMonth', 'Category'])['Amount'].sum().reset_index()
-            chart_type = st.radio("選擇圖表類型：", ["折線圖 (比較趨勢)", "堆疊長條圖 (比較結構)"], horizontal=True)
-            
+            chart_type = st.radio("圖表類型：", ["折線圖 (比較趨勢)", "堆疊長條圖 (比較結構)"], horizontal=True)
             if "折線圖" in chart_type:
                 fig_multi = px.line(monthly_cat, x='YearMonth', y='Amount', color='Category', markers=True)
             else:
                 fig_multi = px.bar(monthly_cat, x='YearMonth', y='Amount', color='Category')
-
             fig_multi.update_xaxes(type='category')
-            fig_multi.update_layout(xaxis_title="月份", yaxis_title="金額")
             st.plotly_chart(fig_multi, use_container_width=True)
-
     else:
         st.warning("🔒 這是公司機密數據，請輸入管理員密碼解鎖。")
 
-# --- TAB 4: 總明細與管理 (大改版：加入編輯器) ---
+# --- TAB 4: 總明細與管理 (管理員編輯) ---
 with tab4:
     if is_admin:
         st.subheader("📋 所有紀錄明細")
         st.dataframe(df.sort_values(by="Date", ascending=False), use_container_width=True)
-        
         st.markdown("---")
-        st.subheader("✏️ 修改 / 編輯歷史資料")
-        st.caption("請從下方選單選擇要修改的資料，確認後點擊儲存。")
+        st.subheader("👑 管理員專用：修改 / 刪除任何人資料")
         
         if not df.empty:
             edit_df = df.copy()
-            # 建立選單標籤 (為了讓管理員好辨識是哪一筆)
-            edit_df['label'] = edit_df['Date'].dt.strftime('%Y-%m-%d') + " | " + edit_df['User'].astype(str) + " | " + edit_df['Category'] + " | $" + edit_df['Amount'].astype(int).astype(str) + " | " + edit_df['Note'].astype(str)
+            edit_df['label'] = edit_df['Date'].dt.strftime('%Y-%m-%d') + " | " + edit_df['User'].astype(str) + " | " + edit_df['Category'] + " | $" + edit_df['Amount'].astype(int).astype(str)
             
-            edit_target = st.selectbox("選擇要修改的項目：", ["(請選擇)"] + edit_df['label'].tolist())
+            admin_target = st.selectbox("選擇要處理的項目：", ["(請選擇)"] + edit_df['label'].tolist(), key="admin_edit_select")
             
-            if edit_target != "(請選擇)":
-                # 找出被選中的那筆資料
-                target_row = edit_df[edit_df['label'] == edit_target].iloc[0]
-                row_id_to_edit = target_row['row_id']
+            if admin_target != "(請選擇)":
+                target_row = edit_df[edit_df['label'] == admin_target].iloc[0]
+                row_id = target_row['row_id']
                 
-                # 顯示編輯表單，並預先填入原本的資料
-                with st.form("edit_form"):
-                    st.write(f"正在編輯：**{target_row['User']}** 於 **{target_row['Date'].strftime('%Y-%m-%d')}** 輸入的資料")
+                c1, c2 = st.columns(2)
+                with c1:
+                    edit_date = st.date_input("日期", target_row['Date'], key="a_date")
+                    cat_idx = categories.index(target_row['Category']) if target_row['Category'] in categories else 0
+                    edit_category = st.selectbox("類別", categories, index=cat_idx, key="a_cat")
                     
-                    edit_date = st.date_input("日期", target_row['Date'])
-                    
-                    # 避免資料庫舊類別不在現有清單中而報錯
-                    cat_index = categories.index(target_row['Category']) if target_row['Category'] in categories else 0
-                    edit_category = st.selectbox("類別", categories, index=cat_index)
-                    
-                    edit_amount = st.number_input("金額", min_value=0, step=100, value=int(target_row['Amount']))
-                    edit_note = st.text_input("備註", str(target_row['Note']))
-                    
-                    # 員工清單 (排除第一個"選擇您的名字...")
                     valid_employees = employees[1:]
-                    user_index = valid_employees.index(target_row['User']) if target_row['User'] in valid_employees else 0
-                    edit_user = st.selectbox("填表人", valid_employees, index=user_index)
-                    
-                    submit_edit = st.form_submit_button("💾 儲存修改至雲端")
-                    
-                    if submit_edit:
-                        with st.spinner("正在更新資料庫..."):
-                            update_entry_in_cloud(row_id_to_edit, edit_date, edit_category, edit_amount, edit_note, edit_user)
-                        st.success("✅ 資料已成功修改！")
+                    user_idx = valid_employees.index(target_row['User']) if target_row['User'] in valid_employees else 0
+                    edit_user = st.selectbox("填表人", valid_employees, index=user_idx, key="a_user")
+                with c2:
+                    edit_amount = st.number_input("金額", min_value=0, step=100, value=int(target_row['Amount']), key="a_amt")
+                    edit_note = st.text_input("備註", str(target_row['Note']), key="a_note")
+                
+                btn1, btn2 = st.columns(2)
+                with btn1:
+                    if st.button("💾 強制儲存修改", use_container_width=True, type="primary"):
+                        with st.spinner("正在更新..."):
+                            update_entry_in_cloud(row_id, edit_date, edit_category, edit_amount, edit_note, edit_user)
+                        st.success("✅ 修改成功！")
                         st.cache_data.clear()
                         st.rerun()
-        else:
-            st.info("目前沒有資料可供修改。")
+                with btn2:
+                    if st.button("🗑️ 強制刪除此筆", use_container_width=True):
+                        with st.spinner("正在刪除..."):
+                            delete_entry_from_cloud(row_id)
+                        st.success("✅ 刪除成功！")
+                        st.cache_data.clear()
+                        st.rerun()
     else:
         st.warning("🔒 需要管理員權限")
