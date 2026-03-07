@@ -29,14 +29,14 @@ def connect_to_gsheets():
             st.error("找不到金鑰！")
             st.stop()
         client = gspread.authorize(creds)
-        sheet = client.open(SHEET_NAME).sheet1
-        return sheet
+        return client.open(SHEET_NAME)
     except Exception as e:
         st.error(f"❌ 無法連接 Google Sheets: {e}")
         st.stop()
 
 def load_data():
-    sheet = connect_to_gsheets()
+    spreadsheet = connect_to_gsheets()
+    sheet = spreadsheet.sheet1
     try:
         all_values = sheet.get_all_values()
         if len(all_values) < 2:
@@ -56,17 +56,47 @@ def load_data():
     except Exception as e:
         return pd.DataFrame(columns=["Date", "Category", "Amount", "Note", "User", "row_id"])
 
+@st.cache_data
+def load_categories():
+    spreadsheet = connect_to_gsheets()
+    default_cats = ["進貨成本", "運費", "行銷廣告", "交通差旅", "辦公雜項", "租金貸款", "營業稅＆其他稅務", "交際費", "軟體系統使用費", "薪資人事費"]
+    try:
+        cat_sheet = spreadsheet.worksheet("Categories")
+        cats = cat_sheet.col_values(1)
+        cats = [c.strip() for c in cats if c.strip()]
+        if not cats: 
+            cat_sheet.append_rows([[c] for c in default_cats])
+            return default_cats
+        return cats
+    except Exception as e:
+        if "WorksheetNotFound" in str(type(e).__name__):
+            try:
+                cat_sheet = spreadsheet.add_worksheet(title="Categories", rows="100", cols="1")
+                cat_sheet.append_rows([[c] for c in default_cats])
+                return default_cats
+            except:
+                return default_cats
+        return default_cats
+
+def add_category_to_cloud(new_cat):
+    spreadsheet = connect_to_gsheets()
+    cat_sheet = spreadsheet.worksheet("Categories")
+    cat_sheet.append_row([new_cat.strip()])
+
 def save_entry_to_cloud(date, category, amount, note, user):
-    sheet = connect_to_gsheets()
+    spreadsheet = connect_to_gsheets()
+    sheet = spreadsheet.sheet1
     date_str = date.strftime("%Y-%m-%d")
     sheet.append_row([date_str, category, amount, note, user])
 
 def delete_entry_from_cloud(row_id):
-    sheet = connect_to_gsheets()
+    spreadsheet = connect_to_gsheets()
+    sheet = spreadsheet.sheet1
     sheet.delete_rows(int(row_id))
 
 def update_entry_in_cloud(row_id, date, category, amount, note, user):
-    sheet = connect_to_gsheets()
+    spreadsheet = connect_to_gsheets()
+    sheet = spreadsheet.sheet1
     date_str = date.strftime("%Y-%m-%d")
     cell_list = sheet.range(f"A{row_id}:E{row_id}")
     values = [date_str, category, amount, note, user]
@@ -76,7 +106,7 @@ def update_entry_in_cloud(row_id, date, category, amount, note, user):
 
 # --- 3. 初始化資料 ---
 df = load_data()
-categories = ["進貨成本", "運費", "行銷廣告", "交通差旅", "辦公雜項", "租金貸款", "營業稅＆其他稅務", "交際費", "軟體系統使用費", "薪資人事費"]
+categories = load_categories() 
 employees = ["選擇您的名字...", "Yuri", "YT", "NiNi"]
 
 # ==========================================
@@ -116,7 +146,7 @@ if current_user == "選擇您的名字...":
 
 st.write(f"👋 您好，**{current_user}**！")
 
-tab1, tab2, tab3, tab4 = st.tabs(["➕ 新增支出", "📝 我的紀錄 (編輯/刪除)", "📈 總報表 (限)", "📋 總明細與管理 (限)"])
+tab1, tab2, tab3, tab4 = st.tabs(["➕ 新增支出", "📝 我的紀錄 (點擊修改)", "📈 總報表 (限)", "📋 總明細與管理 (限)"])
 
 # --- TAB 1: 新增支出 ---
 with tab1:
@@ -137,7 +167,7 @@ with tab1:
             else:
                 st.error("金額必須大於 0")
 
-# --- TAB 2: 我的紀錄 (🔥大改版：加入修改功能) ---
+# --- TAB 2: 我的紀錄 (🔥 點擊表格直接編輯) ---
 with tab2:
     st.header(f"📝 {current_user} 的記帳紀錄")
     if not df.empty and "User" in df.columns:
@@ -145,22 +175,31 @@ with tab2:
         if my_df.empty:
             st.info("您目前還沒有輸入過任何資料。")
         else:
-            st.dataframe(my_df[["Date", "Category", "Amount", "Note"]].sort_values(by="Date", ascending=False), use_container_width=True)
-            st.markdown("---")
-            st.subheader("✏️ 修改或刪除資料")
+            st.write("👇 **請直接在下方表格中，點擊您要修改的那一列：**")
             
-            my_df['label'] = my_df['Date'].dt.strftime('%Y-%m-%d') + " | " + my_df['Category'] + " | $" + my_df['Amount'].astype(int).astype(str) + " | " + my_df['Note']
+            # 確保資料依日期排序，並重置 index (為了正確抓取點擊的行號)
+            my_df_sorted = my_df.sort_values(by="Date", ascending=False).reset_index(drop=True)
             
-            # 選擇要修改的項目
-            target = st.selectbox("請選擇要修改/刪除的項目：", ["(請選擇)"] + my_df['label'].tolist(), key="user_edit_select")
+            # 顯示互動式表格
+            event = st.dataframe(
+                my_df_sorted[["Date", "Category", "Amount", "Note"]],
+                use_container_width=True,
+                on_select="rerun",           # 點擊時重新載入
+                selection_mode="single-row"  # 限制只能單選一行
+            )
             
-            if target != "(請選擇)":
-                target_row = my_df[my_df['label'] == target].iloc[0]
+            # 檢查是否有行被選取
+            selected_rows = event.selection.rows
+            
+            if selected_rows:
+                st.markdown("---")
+                st.subheader("✏️ 編輯選取的資料")
+                
+                # 抓取被點擊的那一行資料
+                selected_index = selected_rows[0]
+                target_row = my_df_sorted.iloc[selected_index]
                 row_id = target_row['row_id']
                 
-                st.info("👇 請在下方修改內容並儲存，或直接刪除此筆資料。")
-                
-                # 顯示輸入框讓使用者修改
                 c1, c2 = st.columns(2)
                 with c1:
                     edit_date = st.date_input("修改日期", target_row['Date'], key="u_date")
@@ -170,7 +209,6 @@ with tab2:
                     edit_amount = st.number_input("修改金額", min_value=0, step=100, value=int(target_row['Amount']), key="u_amt")
                     edit_note = st.text_input("修改備註", str(target_row['Note']), key="u_note")
                 
-                # 並排顯示「儲存」與「刪除」按鈕
                 btn1, btn2 = st.columns(2)
                 with btn1:
                     if st.button("💾 儲存修改內容", use_container_width=True, type="primary"):
@@ -186,6 +224,8 @@ with tab2:
                         st.success("✅ 刪除成功！")
                         st.cache_data.clear()
                         st.rerun()
+            else:
+                st.info("👆 點擊上方表格中的任意一筆紀錄，即可展開修改選單。")
     else:
         st.warning("資料庫結構正在更新，或目前無資料。")
 
@@ -233,22 +273,32 @@ with tab3:
     else:
         st.warning("🔒 這是公司機密數據，請輸入管理員密碼解鎖。")
 
-# --- TAB 4: 總明細與管理 (管理員編輯) ---
+# --- TAB 4: 總明細與管理 (🔥 點擊表格直接編輯) ---
 with tab4:
     if is_admin:
-        st.subheader("📋 所有紀錄明細")
-        st.dataframe(df.sort_values(by="Date", ascending=False), use_container_width=True)
-        st.markdown("---")
-        st.subheader("👑 管理員專用：修改 / 刪除任何人資料")
+        st.subheader("👑 管理員專用：修改 / 刪除歷史資料")
         
         if not df.empty:
-            edit_df = df.copy()
-            edit_df['label'] = edit_df['Date'].dt.strftime('%Y-%m-%d') + " | " + edit_df['User'].astype(str) + " | " + edit_df['Category'] + " | $" + edit_df['Amount'].astype(int).astype(str)
+            st.write("👇 **請直接在下方表格中，點擊您要修改的那一列：**")
             
-            admin_target = st.selectbox("選擇要處理的項目：", ["(請選擇)"] + edit_df['label'].tolist(), key="admin_edit_select")
+            # 排序並重置 index
+            admin_df_sorted = df.sort_values(by="Date", ascending=False).reset_index(drop=True)
             
-            if admin_target != "(請選擇)":
-                target_row = edit_df[edit_df['label'] == admin_target].iloc[0]
+            # 顯示互動式表格
+            admin_event = st.dataframe(
+                admin_df_sorted[["Date", "User", "Category", "Amount", "Note"]],
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode="single-row"
+            )
+            
+            admin_selected_rows = admin_event.selection.rows
+            
+            if admin_selected_rows:
+                st.markdown("---")
+                st.subheader("✏️ 編輯選取的資料")
+                
+                target_row = admin_df_sorted.iloc[admin_selected_rows[0]]
                 row_id = target_row['row_id']
                 
                 c1, c2 = st.columns(2)
@@ -279,5 +329,36 @@ with tab4:
                         st.success("✅ 刪除成功！")
                         st.cache_data.clear()
                         st.rerun()
+            else:
+                st.info("👆 點擊上方表格中的任意一筆紀錄，即可展開修改選單。")
+
+        # 動態新增類別
+        st.markdown("---")
+        st.subheader("🏷️ 管理支出類別")
+        st.caption("在此新增的類別會永久保存於雲端，所有員工皆可選擇。")
+        
+        st.write(f"**目前共有 {len(categories)} 個類別：**")
+        st.write("、".join(categories))
+        
+        with st.form("add_cat_form", clear_on_submit=True):
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                new_cat = st.text_input("新增類別名稱", placeholder="例如：教育訓練費")
+            with c2:
+                st.write("") 
+                st.write("")
+                submit_cat = st.form_submit_button("➕ 新增類別", use_container_width=True)
+            
+            if submit_cat:
+                if not new_cat.strip():
+                    st.error("❌ 類別名稱不能為空！")
+                elif new_cat.strip() in categories:
+                    st.error("❌ 此類別已經存在了！")
+                else:
+                    with st.spinner("正在將類別同步至雲端..."):
+                        add_category_to_cloud(new_cat)
+                    st.success(f"✅ 成功新增類別：{new_cat.strip()}")
+                    st.cache_data.clear() 
+                    st.rerun()
     else:
         st.warning("🔒 需要管理員權限")
