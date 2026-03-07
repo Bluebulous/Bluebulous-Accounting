@@ -9,7 +9,7 @@ import json
 
 # --- 1. 設定區 ---
 SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-SHEET_ID = "1ot_AycCO1GEqqGsEXMWjEAuFsZJZ1OSz"
+SHEET_ID = "1AEj8yFnrvzm7p2IQQeGe5PdBgRJLLtZd1Lx55SNvn40"
 
 st.set_page_config(page_title="Bluebulous財務戰情室", page_icon="🏢", layout="wide")
 
