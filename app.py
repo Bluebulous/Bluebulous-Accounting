@@ -59,7 +59,7 @@ def load_data():
 @st.cache_data
 def load_categories():
     spreadsheet = connect_to_gsheets()
-    default_cats = ["進貨成本", "運費", "行銷廣告", "交通差旅", "辦公雜項", "租金貸款", "營業稅＆其他稅務", "交際費", "軟體系統使用費", "薪資人事費"]
+    default_cats = ["進貨成本", "運費", "行銷廣告", "交通差旅", "辦公雜項", "水電等硬體費用", "租金貸款", "營業稅＆其他稅務", "交際費", "軟體系統使用費", "薪資人事費"]
     try:
         cat_sheet = spreadsheet.worksheet("Categories")
         cats = cat_sheet.col_values(1)
