@@ -7,29 +7,17 @@ from datetime import datetime
 import os
 import json
 
-# --- 1. 設定區 ---
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 SHEET_ID = "1AEj8yFnrvzm7p2IQQeGe5PdBgRJLLtZd1Lx55SNvn40"
 
 st.set_page_config(page_title="Bluebulous財務戰情室", page_icon="🏢", layout="wide")
 
-# --- 2. 視覺風格：黑色背景 Dashboard ---
 st.markdown("""
 <style>
-.stApp {
-    background: #080b0f;
-    color: #f5f7f6;
-}
-.block-container {
-    padding-top: 2rem;
-}
-[data-testid="stSidebar"] {
-    background: #10151c;
-    border-right: 1px solid #202833;
-}
-h1, h2, h3, h4, h5, h6, p, label, span {
-    color: #f5f7f6;
-}
+.stApp { background: #080b0f; color: #f5f7f6; }
+.block-container { padding-top: 2rem; }
+[data-testid="stSidebar"] { background: #10151c; border-right: 1px solid #202833; }
+h1, h2, h3, h4, h5, h6, p, label, span { color: #f5f7f6; }
 div[data-testid="stMetric"] {
     background: #121821;
     border: 1px solid #263242;
@@ -37,46 +25,31 @@ div[data-testid="stMetric"] {
     padding: 18px 20px;
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
 }
-div[data-testid="stMetric"] label {
-    color: #aeb8b3;
-}
-div[data-testid="stMetricValue"] {
-    color: #f5f7f6;
-}
-div[data-testid="stMetricDelta"] {
-    color: #dff56f;
-}
-.stTabs [data-baseweb="tab-list"] {
-    gap: 8px;
-}
+div[data-testid="stMetric"] label { color: #aeb8b3; }
+div[data-testid="stMetricValue"] { color: #f5f7f6; }
+div[data-testid="stMetricDelta"] { color: #dff56f; }
+.stTabs [data-baseweb="tab-list"] { gap: 8px; }
 .stTabs [data-baseweb="tab"] {
     background: #121821;
     border-radius: 999px;
     padding: 10px 18px;
     border: 1px solid #263242;
 }
-.stTabs [aria-selected="true"] {
-    background: #dff56f;
-    color: #0b0f14;
-}
-.stTabs [aria-selected="true"] p {
-    color: #0b0f14;
-}
+.stTabs [aria-selected="true"] { background: #dff56f; color: #0b0f14; }
+.stTabs [aria-selected="true"] p { color: #0b0f14; }
 div[data-testid="stExpander"] {
     background: #121821;
     border: 1px solid #263242;
     border-radius: 16px;
 }
-[data-testid="stDataFrame"] {
-    background: #121821;
-}
+[data-testid="stDataFrame"] { background: #121821; }
 </style>
 """, unsafe_allow_html=True)
 
 PLOTLY_TEMPLATE = "plotly_dark"
 COLOR_SEQUENCE = ["#dff56f", "#7ee0c3", "#f7d774", "#8fb3ff", "#ff9fb2", "#c7a6ff", "#6bd3ff", "#b7f7d8"]
 
-# --- 3. 連線與資料處理 ---
+
 @st.cache_resource
 def connect_to_gsheets():
     try:
@@ -120,6 +93,24 @@ def get_or_create_worksheet(spreadsheet, title, rows="200", cols="10"):
         return spreadsheet.worksheet(title)
     except Exception:
         return spreadsheet.add_worksheet(title=title, rows=rows, cols=cols)
+
+
+def safe_date(value):
+    if pd.isna(value):
+        return datetime.today().date()
+    if isinstance(value, pd.Timestamp):
+        return value.date()
+    return value
+
+
+def add_missing_option(options, value, empty_label):
+    value = "" if pd.isna(value) else str(value).strip()
+    display_value = value if value else empty_label
+
+    if display_value not in options:
+        options = options + [display_value]
+
+    return options, display_value
 
 
 def load_data():
@@ -430,7 +421,6 @@ def render_category_deep_dive(active_df, category_name, key_prefix):
     st.plotly_chart(style_fig(fig, height=340), use_container_width=True, key=f"{key_prefix}_monthly_line")
 
 
-# --- 4. 初始化資料 ---
 df = load_data()
 categories = load_categories()
 options_df = load_category_options()
@@ -439,11 +429,11 @@ option_categories = sorted(options_df["Category"].dropna().astype(str).str.strip
 categories = sorted(list(dict.fromkeys(categories + option_categories)))
 
 employees = ["選擇您的名字...", "Yuri", "YT", "NiNi"]
+valid_users = employees[1:]
 
 if "pending_entry" not in st.session_state:
     st.session_state.pending_entry = None
 
-# --- 5. 側邊欄 ---
 with st.sidebar:
     st.title("Bluebulous")
     st.caption("財務戰情室")
@@ -474,7 +464,6 @@ with st.sidebar:
     elif admin_input:
         st.error("密碼錯誤")
 
-# --- 6. 主畫面 ---
 st.title("Bluebulous 記帳系統")
 
 if current_user == "選擇您的名字...":
@@ -490,52 +479,48 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "總明細與管理"
 ])
 
-# --- TAB 1: 新增支出 ---
 with tab1:
     st.header("新增一筆紀錄")
 
-    with st.form("cloud_entry", clear_on_submit=True):
-        d = st.date_input("日期", datetime.today(), key="new_date")
-        c = st.selectbox("類別", categories, key="new_category")
+    d = st.date_input("日期", datetime.today(), key="new_date")
+    c = st.selectbox("類別", categories, key="new_category")
 
-        sub_options = get_subcategory_options(options_df, c)
-        sub_choice = st.selectbox("細分類", sub_options, key="new_subcategory")
+    sub_options = get_subcategory_options(options_df, c)
+    sub_choice = st.selectbox("細分類", sub_options, key=f"new_subcategory_{c}")
 
-        vendor_options = get_vendor_options(options_df, c, sub_choice)
-        vendor_choice = st.selectbox("付款對象 / 廠商", vendor_options, key="new_vendor")
+    vendor_options = get_vendor_options(options_df, c, sub_choice)
+    vendor_choice = st.selectbox("付款對象 / 廠商", vendor_options, key=f"new_vendor_{c}_{sub_choice}")
 
-        a = st.number_input("金額", min_value=0, step=100, key="new_amount")
-        n = st.text_input("備註", key="new_note")
+    a = st.number_input("金額", min_value=0, step=100, key="new_amount")
+    n = st.text_input("備註", key="new_note")
 
-        submitted = st.form_submit_button("上傳資料")
+    if st.button("上傳資料", type="primary", key="submit_new_entry"):
+        sub_value = normalize_empty_choice(sub_choice)
+        vendor_value = normalize_empty_choice(vendor_choice)
 
-        if submitted:
-            sub_value = normalize_empty_choice(sub_choice)
-            vendor_value = normalize_empty_choice(vendor_choice)
+        if a <= 0:
+            st.error("金額必須大於 0")
+        else:
+            duplicates = find_duplicate_entries(df, d, c, sub_value, vendor_value, a, current_user)
 
-            if a <= 0:
-                st.error("金額必須大於 0")
+            if not duplicates.empty:
+                st.session_state.pending_entry = {
+                    "date": d,
+                    "category": c,
+                    "subcategory": sub_value,
+                    "vendor": vendor_value,
+                    "amount": a,
+                    "note": n,
+                    "user": current_user
+                }
+                st.warning("可能已有相同紀錄，請確認是否仍要新增。")
             else:
-                duplicates = find_duplicate_entries(df, d, c, sub_value, vendor_value, a, current_user)
+                with st.spinner("正在寫入雲端..."):
+                    save_entry_to_cloud(d, c, sub_value, vendor_value, a, n, current_user)
 
-                if not duplicates.empty:
-                    st.session_state.pending_entry = {
-                        "date": d,
-                        "category": c,
-                        "subcategory": sub_value,
-                        "vendor": vendor_value,
-                        "amount": a,
-                        "note": n,
-                        "user": current_user
-                    }
-                    st.warning("可能已有相同紀錄，請確認是否仍要新增。")
-                else:
-                    with st.spinner("正在寫入雲端..."):
-                        save_entry_to_cloud(d, c, sub_value, vendor_value, a, n, current_user)
-
-                    st.success("資料已儲存。")
-                    st.cache_data.clear()
-                    st.rerun()
+                st.success("資料已儲存。")
+                st.cache_data.clear()
+                st.rerun()
 
     if st.session_state.pending_entry:
         pending = st.session_state.pending_entry
@@ -583,7 +568,6 @@ with tab1:
                 st.session_state.pending_entry = None
                 st.rerun()
 
-# --- TAB 2: 我的紀錄 ---
 with tab2:
     st.header(f"{current_user} 的記帳紀錄")
 
@@ -609,28 +593,31 @@ with tab2:
             selected_rows = event.selection.rows
 
             if selected_rows:
+                target_row = my_df_sorted.iloc[selected_rows[0]]
+                row_id = int(target_row["row_id"])
+                row_key = f"user_edit_{row_id}"
+
                 st.markdown("---")
                 st.subheader("編輯選取的資料")
-
-                target_row = my_df_sorted.iloc[selected_rows[0]]
-                row_id = target_row["row_id"]
 
                 c1, c2 = st.columns(2)
 
                 with c1:
-                    edit_date = st.date_input("修改日期", target_row["Date"], key="u_date")
-                    cat_idx = categories.index(target_row["Category"]) if target_row["Category"] in categories else 0
-                    edit_category = st.selectbox("修改類別", categories, index=cat_idx, key="u_cat")
+                    edit_date = st.date_input("修改日期", safe_date(target_row["Date"]), key=f"{row_key}_date")
+
+                    cat_options, current_cat = add_missing_option(categories, target_row["Category"], "")
+                    cat_idx = cat_options.index(current_cat) if current_cat in cat_options else 0
+                    edit_category = st.selectbox("修改類別", cat_options, index=cat_idx, key=f"{row_key}_cat")
 
                     edit_sub_options = get_subcategory_options(options_df, edit_category)
-                    current_sub = target_row["SubCategory"] if target_row["SubCategory"] else "未分類"
-                    sub_idx = edit_sub_options.index(current_sub) if current_sub in edit_sub_options else 0
-                    edit_subcategory_choice = st.selectbox("修改細分類", edit_sub_options, index=sub_idx, key="u_sub")
+                    edit_sub_options, current_sub = add_missing_option(edit_sub_options, target_row["SubCategory"], "未分類")
+                    sub_idx = edit_sub_options.index(current_sub)
+                    edit_subcategory_choice = st.selectbox("修改細分類", edit_sub_options, index=sub_idx, key=f"{row_key}_sub")
 
                     edit_vendor_options = get_vendor_options(options_df, edit_category, edit_subcategory_choice)
-                    current_vendor = target_row["Vendor"] if target_row["Vendor"] else "未指定"
-                    vendor_idx = edit_vendor_options.index(current_vendor) if current_vendor in edit_vendor_options else 0
-                    edit_vendor_choice = st.selectbox("修改付款對象 / 廠商", edit_vendor_options, index=vendor_idx, key="u_vendor")
+                    edit_vendor_options, current_vendor = add_missing_option(edit_vendor_options, target_row["Vendor"], "未指定")
+                    vendor_idx = edit_vendor_options.index(current_vendor)
+                    edit_vendor_choice = st.selectbox("修改付款對象 / 廠商", edit_vendor_options, index=vendor_idx, key=f"{row_key}_vendor")
 
                 with c2:
                     edit_amount = st.number_input(
@@ -638,14 +625,14 @@ with tab2:
                         min_value=0,
                         step=100,
                         value=int(target_row["Amount"]),
-                        key="u_amt"
+                        key=f"{row_key}_amt"
                     )
-                    edit_note = st.text_input("修改備註", str(target_row["Note"]), key="u_note")
+                    edit_note = st.text_input("修改備註", str(target_row["Note"]), key=f"{row_key}_note")
 
                 btn1, btn2 = st.columns(2)
 
                 with btn1:
-                    if st.button("儲存修改內容", use_container_width=True, type="primary", key="u_save"):
+                    if st.button("儲存修改內容", use_container_width=True, type="primary", key=f"{row_key}_save"):
                         if edit_amount <= 0:
                             st.error("金額必須大於 0")
                         else:
@@ -666,7 +653,7 @@ with tab2:
                             st.rerun()
 
                 with btn2:
-                    if st.button("作廢此筆", use_container_width=True, key="u_void"):
+                    if st.button("作廢此筆", use_container_width=True, key=f"{row_key}_void"):
                         with st.spinner("正在作廢..."):
                             void_entry_in_cloud(row_id, current_user)
 
@@ -676,7 +663,6 @@ with tab2:
     else:
         st.warning("資料庫結構正在更新，或目前無資料。")
 
-# --- TAB 3: 總報表 ---
 with tab3:
     if is_admin:
         active_df = df[df["Status"] != "作廢"].copy()
@@ -851,7 +837,6 @@ with tab3:
     else:
         st.warning("這是公司機密數據，請輸入管理員密碼解鎖。")
 
-# --- TAB 4: 總明細與管理 ---
 with tab4:
     if is_admin:
         st.subheader("管理員專用：修改 / 作廢歷史資料")
@@ -865,7 +850,6 @@ with tab4:
                 filter_cat = st.selectbox("依類別篩選", ["全部"] + categories, key="admin_filter_cat")
 
             with c_filter2:
-                valid_users = employees[1:]
                 filter_user = st.selectbox("依填表人篩選", ["全部"] + valid_users, key="admin_filter_user")
 
             with c_filter3:
@@ -907,47 +891,50 @@ with tab4:
                 admin_selected_rows = admin_event.selection.rows
 
                 if admin_selected_rows:
+                    target_row = admin_df_sorted.iloc[admin_selected_rows[0]]
+                    row_id = int(target_row["row_id"])
+                    row_key = f"admin_edit_{row_id}"
+
                     st.markdown("---")
                     st.subheader("編輯選取的資料")
-
-                    target_row = admin_df_sorted.iloc[admin_selected_rows[0]]
-                    row_id = target_row["row_id"]
 
                     c1, c2 = st.columns(2)
 
                     with c1:
-                        edit_date = st.date_input("日期", target_row["Date"], key="a_date")
+                        edit_date = st.date_input("日期", safe_date(target_row["Date"]), key=f"{row_key}_date")
 
-                        cat_idx = categories.index(target_row["Category"]) if target_row["Category"] in categories else 0
-                        edit_category = st.selectbox("類別", categories, index=cat_idx, key="a_cat")
+                        cat_options, current_cat = add_missing_option(categories, target_row["Category"], "")
+                        cat_idx = cat_options.index(current_cat) if current_cat in cat_options else 0
+                        edit_category = st.selectbox("類別", cat_options, index=cat_idx, key=f"{row_key}_cat")
 
                         edit_sub_options = get_subcategory_options(options_df, edit_category)
-                        current_sub = target_row["SubCategory"] if target_row["SubCategory"] else "未分類"
-                        sub_idx = edit_sub_options.index(current_sub) if current_sub in edit_sub_options else 0
-                        edit_subcategory_choice = st.selectbox("細分類", edit_sub_options, index=sub_idx, key="a_sub")
+                        edit_sub_options, current_sub = add_missing_option(edit_sub_options, target_row["SubCategory"], "未分類")
+                        sub_idx = edit_sub_options.index(current_sub)
+                        edit_subcategory_choice = st.selectbox("細分類", edit_sub_options, index=sub_idx, key=f"{row_key}_sub")
 
                         edit_vendor_options = get_vendor_options(options_df, edit_category, edit_subcategory_choice)
-                        current_vendor = target_row["Vendor"] if target_row["Vendor"] else "未指定"
-                        vendor_idx = edit_vendor_options.index(current_vendor) if current_vendor in edit_vendor_options else 0
-                        edit_vendor_choice = st.selectbox("付款對象 / 廠商", edit_vendor_options, index=vendor_idx, key="a_vendor")
+                        edit_vendor_options, current_vendor = add_missing_option(edit_vendor_options, target_row["Vendor"], "未指定")
+                        vendor_idx = edit_vendor_options.index(current_vendor)
+                        edit_vendor_choice = st.selectbox("付款對象 / 廠商", edit_vendor_options, index=vendor_idx, key=f"{row_key}_vendor")
 
                     with c2:
-                        user_idx = valid_users.index(target_row["User"]) if target_row["User"] in valid_users else 0
-                        edit_user = st.selectbox("填表人", valid_users, index=user_idx, key="a_user")
+                        user_options, current_edit_user = add_missing_option(valid_users, target_row["User"], "")
+                        user_idx = user_options.index(current_edit_user) if current_edit_user in user_options else 0
+                        edit_user = st.selectbox("填表人", user_options, index=user_idx, key=f"{row_key}_user")
 
                         edit_amount = st.number_input(
                             "金額",
                             min_value=0,
                             step=100,
                             value=int(target_row["Amount"]),
-                            key="a_amt"
+                            key=f"{row_key}_amt"
                         )
-                        edit_note = st.text_input("備註", str(target_row["Note"]), key="a_note")
+                        edit_note = st.text_input("備註", str(target_row["Note"]), key=f"{row_key}_note")
 
                     btn1, btn2 = st.columns(2)
 
                     with btn1:
-                        if st.button("強制儲存修改", use_container_width=True, type="primary", key="a_save"):
+                        if st.button("強制儲存修改", use_container_width=True, type="primary", key=f"{row_key}_save"):
                             if edit_amount <= 0:
                                 st.error("金額必須大於 0")
                             else:
@@ -971,7 +958,7 @@ with tab4:
                         if target_row["Status"] == "作廢":
                             st.info("此筆資料已作廢。")
                         else:
-                            if st.button("作廢此筆", use_container_width=True, key="a_void"):
+                            if st.button("作廢此筆", use_container_width=True, key=f"{row_key}_void"):
                                 with st.spinner("正在作廢..."):
                                     void_entry_in_cloud(row_id, current_user)
 
@@ -1012,72 +999,75 @@ with tab4:
         if not options_df.empty:
             st.dataframe(options_df, use_container_width=True, key="category_options_table")
 
-        with st.form("add_option_form", clear_on_submit=True):
-            o1, o2, o3 = st.columns(3)
+        manage_col1, manage_col2, manage_col3 = st.columns(3)
 
-            with o1:
-                option_category = st.selectbox("主類別", categories, key="option_category")
+        with manage_col1:
+            option_category = st.selectbox("主類別", categories, key="option_category_manage")
 
-            existing_subcategories = sorted([
-                v for v in options_df[
-                    options_df["Category"] == option_category
-                ]["SubCategory"].dropna().astype(str).str.strip().unique()
-                if v
-            ])
+        existing_subcategories = sorted([
+            v for v in options_df[
+                options_df["Category"] == option_category
+            ]["SubCategory"].dropna().astype(str).str.strip().unique()
+            if v
+        ])
 
-            subcategory_choices = ["新增細分類"] + existing_subcategories
+        subcategory_choices = ["新增細分類"] + existing_subcategories
 
-            with o2:
-                subcategory_mode = st.selectbox("細分類", subcategory_choices, key="subcategory_mode")
+        with manage_col2:
+            subcategory_mode = st.selectbox("細分類", subcategory_choices, key=f"subcategory_mode_manage_{option_category}")
 
-                if subcategory_mode == "新增細分類":
-                    option_subcategory = st.text_input(
-                        "新增細分類名稱",
-                        placeholder="例如：貸款、廣告投放、包材",
-                        key="option_new_subcategory"
-                    )
-                else:
-                    option_subcategory = subcategory_mode
-                    st.caption(f"已選擇：{option_subcategory}")
-
-            with o3:
-                option_vendor = st.text_input(
-                    "付款對象 / 廠商",
-                    placeholder="例如：國泰世華銀行、Meta、某供應商",
-                    key="option_vendor"
+            if subcategory_mode == "新增細分類":
+                option_subcategory = st.text_input(
+                    "新增細分類名稱",
+                    placeholder="例如：貸款、廣告投放、包材",
+                    key=f"option_new_subcategory_manage_{option_category}"
                 )
+            else:
+                option_subcategory = subcategory_mode
+                st.info(f"已選擇細分類：{option_subcategory}")
 
-            submit_option = st.form_submit_button("新增選項")
+        with manage_col3:
+            option_vendor = st.text_input(
+                "付款對象 / 廠商",
+                placeholder="例如：國泰世華銀行、Meta、某供應商",
+                key=f"option_vendor_manage_{option_category}_{subcategory_mode}"
+            )
 
-            if submit_option:
-                option_category_clean = option_category.strip()
-                option_subcategory_clean = option_subcategory.strip()
-                option_vendor_clean = option_vendor.strip()
+        option_category_clean = option_category.strip()
+        option_subcategory_clean = option_subcategory.strip()
+        option_vendor_clean = option_vendor.strip()
 
-                if not option_category_clean:
-                    st.error("請選擇主類別。")
-                elif not option_subcategory_clean and not option_vendor_clean:
-                    st.error("細分類與付款對象至少要填一個。")
+        st.caption(
+            f"即將新增：{option_category_clean or '未選擇'} / "
+            f"{option_subcategory_clean or '未填寫'} / "
+            f"{option_vendor_clean or '未填寫'}"
+        )
+
+        if st.button("新增選項", type="primary", key="submit_option_manage"):
+            if not option_category_clean:
+                st.error("請選擇主類別。")
+            elif not option_subcategory_clean and not option_vendor_clean:
+                st.error("細分類與付款對象至少要填一個。")
+            else:
+                duplicate_option = options_df[
+                    (options_df["Category"] == option_category_clean) &
+                    (options_df["SubCategory"] == option_subcategory_clean) &
+                    (options_df["Vendor"] == option_vendor_clean)
+                ]
+
+                if not duplicate_option.empty:
+                    st.error("這組選項已經存在。")
                 else:
-                    duplicate_option = options_df[
-                        (options_df["Category"] == option_category_clean) &
-                        (options_df["SubCategory"] == option_subcategory_clean) &
-                        (options_df["Vendor"] == option_vendor_clean)
-                    ]
+                    with st.spinner("正在新增選項..."):
+                        add_category_option_to_cloud(
+                            option_category_clean,
+                            option_subcategory_clean,
+                            option_vendor_clean
+                        )
 
-                    if not duplicate_option.empty:
-                        st.error("這組選項已經存在。")
-                    else:
-                        with st.spinner("正在新增選項..."):
-                            add_category_option_to_cloud(
-                                option_category_clean,
-                                option_subcategory_clean,
-                                option_vendor_clean
-                            )
-
-                        st.success("選項已新增。")
-                        st.cache_data.clear()
-                        st.rerun()
+                    st.success("選項已新增。")
+                    st.cache_data.clear()
+                    st.rerun()
 
     else:
         st.warning("需要管理員權限。")
