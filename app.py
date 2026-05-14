@@ -13,52 +13,68 @@ SHEET_ID = "1AEj8yFnrvzm7p2IQQeGe5PdBgRJLLtZd1Lx55SNvn40"
 
 st.set_page_config(page_title="Bluebulous財務戰情室", page_icon="🏢", layout="wide")
 
-# --- 2. 視覺風格 ---
+# --- 2. 視覺風格：黑色背景 Dashboard ---
 st.markdown("""
 <style>
 .stApp {
-    background: #eef4f1;
+    background: #080b0f;
+    color: #f5f7f6;
 }
 .block-container {
     padding-top: 2rem;
 }
 [data-testid="stSidebar"] {
-    background: #f8fbf8;
+    background: #10151c;
+    border-right: 1px solid #202833;
+}
+h1, h2, h3, h4, h5, h6, p, label, span {
+    color: #f5f7f6;
 }
 div[data-testid="stMetric"] {
-    background: #ffffff;
-    border: 1px solid #edf1ee;
+    background: #121821;
+    border: 1px solid #263242;
     border-radius: 18px;
     padding: 18px 20px;
-    box-shadow: 0 8px 28px rgba(36, 54, 44, 0.06);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
 }
 div[data-testid="stMetric"] label {
-    color: #6b756f;
+    color: #aeb8b3;
 }
 div[data-testid="stMetricValue"] {
-    color: #141a17;
+    color: #f5f7f6;
+}
+div[data-testid="stMetricDelta"] {
+    color: #dff56f;
 }
 .stTabs [data-baseweb="tab-list"] {
     gap: 8px;
 }
 .stTabs [data-baseweb="tab"] {
-    background: #ffffff;
+    background: #121821;
     border-radius: 999px;
     padding: 10px 18px;
+    border: 1px solid #263242;
 }
 .stTabs [aria-selected="true"] {
     background: #dff56f;
+    color: #0b0f14;
+}
+.stTabs [aria-selected="true"] p {
+    color: #0b0f14;
 }
 div[data-testid="stExpander"] {
-    background: #ffffff;
-    border: 1px solid #edf1ee;
+    background: #121821;
+    border: 1px solid #263242;
     border-radius: 16px;
+}
+[data-testid="stDataFrame"] {
+    background: #121821;
 }
 </style>
 """, unsafe_allow_html=True)
 
-PLOTLY_TEMPLATE = "plotly_white"
-COLOR_SEQUENCE = ["#c8f7df", "#dff56f", "#9bd8c6", "#f7d774", "#b8c8ff", "#ffc6d0", "#c9b8ff", "#a8e6cf"]
+PLOTLY_TEMPLATE = "plotly_dark"
+COLOR_SEQUENCE = ["#dff56f", "#7ee0c3", "#f7d774", "#8fb3ff", "#ff9fb2", "#c7a6ff", "#6bd3ff", "#b7f7d8"]
 
 # --- 3. 連線與資料處理 ---
 @st.cache_resource
@@ -87,15 +103,15 @@ def style_fig(fig, height=380):
     fig.update_layout(
         template=PLOTLY_TEMPLATE,
         height=height,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#18201b"),
+        paper_bgcolor="#121821",
+        plot_bgcolor="#121821",
+        font=dict(family="Arial", color="#f5f7f6"),
         margin=dict(l=20, r=20, t=50, b=30),
         colorway=COLOR_SEQUENCE,
         legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
     )
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(gridcolor="#e7eee9")
+    fig.update_xaxes(showgrid=False, color="#cfd7d3")
+    fig.update_yaxes(gridcolor="#263242", color="#cfd7d3")
     return fig
 
 
@@ -199,7 +215,6 @@ def load_category_options():
 
         header = values[0]
         data = values[1:]
-
         df_opt = pd.DataFrame(data, columns=header)
 
         for col in ["Category", "SubCategory", "Vendor"]:
@@ -346,7 +361,7 @@ def get_duplicate_groups(df):
     return active_df[dup_mask].sort_values(by=["Date", "User", "Category", "Amount"])
 
 
-def render_category_deep_dive(active_df, category_name):
+def render_category_deep_dive(active_df, category_name, key_prefix):
     target_df = active_df[active_df["Category"] == category_name].copy()
 
     st.subheader(f"{category_name}分析")
@@ -380,7 +395,7 @@ def render_category_deep_dive(active_df, category_name):
             color_discrete_sequence=COLOR_SEQUENCE
         )
         fig.update_traces(textposition="inside", textinfo="percent+label")
-        st.plotly_chart(style_fig(fig), use_container_width=True)
+        st.plotly_chart(style_fig(fig), use_container_width=True, key=f"{key_prefix}_subcategory_pie")
 
     with c2:
         vendor_df = target_df.copy()
@@ -394,10 +409,10 @@ def render_category_deep_dive(active_df, category_name):
             orientation="h",
             title=f"{category_name}付款對象 / 廠商排行",
             color="Amount",
-            color_continuous_scale=["#c8f7df", "#dff56f"]
+            color_continuous_scale=["#2a3746", "#dff56f"]
         )
         fig.update_layout(yaxis=dict(categoryorder="total ascending"), coloraxis_showscale=False)
-        st.plotly_chart(style_fig(fig), use_container_width=True)
+        st.plotly_chart(style_fig(fig), use_container_width=True, key=f"{key_prefix}_vendor_bar")
 
     monthly = target_df.copy()
     monthly["YearMonth"] = monthly["Date"].dt.strftime("%Y-%m")
@@ -409,10 +424,10 @@ def render_category_deep_dive(active_df, category_name):
         y="Amount",
         markers=True,
         title=f"{category_name}每月趨勢",
-        color_discrete_sequence=["#9bd8c6"]
+        color_discrete_sequence=["#7ee0c3"]
     )
     fig.update_xaxes(type="category")
-    st.plotly_chart(style_fig(fig, height=340), use_container_width=True)
+    st.plotly_chart(style_fig(fig, height=340), use_container_width=True, key=f"{key_prefix}_monthly_line")
 
 
 # --- 4. 初始化資料 ---
@@ -716,10 +731,10 @@ with tab3:
                     orientation="h",
                     title="類別支出排行",
                     color="Amount",
-                    color_continuous_scale=["#c8f7df", "#dff56f"]
+                    color_continuous_scale=["#2a3746", "#dff56f"]
                 )
                 fig.update_layout(yaxis=dict(categoryorder="total ascending"), coloraxis_showscale=False)
-                st.plotly_chart(style_fig(fig), use_container_width=True)
+                st.plotly_chart(style_fig(fig), use_container_width=True, key="category_rank_bar")
 
             with col2:
                 fig = px.pie(
@@ -731,7 +746,7 @@ with tab3:
                     color_discrete_sequence=COLOR_SEQUENCE
                 )
                 fig.update_traces(textposition="inside", textinfo="percent+label")
-                st.plotly_chart(style_fig(fig), use_container_width=True)
+                st.plotly_chart(style_fig(fig), use_container_width=True, key="category_share_pie")
 
             col3, col4 = st.columns(2)
 
@@ -743,10 +758,10 @@ with tab3:
                     y="Amount",
                     markers=True,
                     title="每月總支出趨勢",
-                    color_discrete_sequence=["#9bd8c6"]
+                    color_discrete_sequence=["#7ee0c3"]
                 )
                 fig.update_xaxes(type="category")
-                st.plotly_chart(style_fig(fig), use_container_width=True)
+                st.plotly_chart(style_fig(fig), use_container_width=True, key="monthly_total_line")
 
             with col4:
                 sub_df = active_df.copy()
@@ -760,19 +775,20 @@ with tab3:
                     orientation="h",
                     title="細分類支出排行",
                     color="Amount",
-                    color_continuous_scale=["#c8f7df", "#dff56f"]
+                    color_continuous_scale=["#2a3746", "#dff56f"]
                 )
                 fig.update_layout(yaxis=dict(categoryorder="total ascending"), coloraxis_showscale=False)
-                st.plotly_chart(style_fig(fig), use_container_width=True)
+                st.plotly_chart(style_fig(fig), use_container_width=True, key="subcategory_rank_bar")
 
             st.markdown("---")
 
             selected_deep_category = st.selectbox(
                 "選擇一個類別查看細部分析",
                 categories,
-                index=categories.index("行銷廣告") if "行銷廣告" in categories else 0
+                index=categories.index("行銷廣告") if "行銷廣告" in categories else 0,
+                key="selected_deep_category"
             )
-            render_category_deep_dive(active_df, selected_deep_category)
+            render_category_deep_dive(active_df, selected_deep_category, "selected_deep_category")
 
             st.markdown("---")
             st.subheader("常用類別快速分析")
@@ -780,18 +796,18 @@ with tab3:
             quick1, quick2 = st.columns(2)
 
             with quick1:
-                render_category_deep_dive(active_df, "行銷廣告")
+                render_category_deep_dive(active_df, "行銷廣告", "quick_marketing")
 
             with quick2:
-                render_category_deep_dive(active_df, "進貨成本")
+                render_category_deep_dive(active_df, "進貨成本", "quick_purchase")
 
             quick3, quick4 = st.columns(2)
 
             with quick3:
-                render_category_deep_dive(active_df, "租金貸款")
+                render_category_deep_dive(active_df, "租金貸款", "quick_rent_loan")
 
             with quick4:
-                render_category_deep_dive(active_df, "軟體系統使用費")
+                render_category_deep_dive(active_df, "軟體系統使用費", "quick_software")
 
             st.markdown("---")
             st.subheader("異常與提醒")
