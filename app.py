@@ -592,7 +592,7 @@ with tab2:
 
             selected_rows = event.selection.rows
 
-            if selected_rows:
+            if selected_rows and selected_rows[0] < len(my_df_sorted):
                 target_row = my_df_sorted.iloc[selected_rows[0]]
                 row_id = int(target_row["row_id"])
                 row_key = f"user_edit_{row_id}"
@@ -890,7 +890,7 @@ with tab4:
 
                 admin_selected_rows = admin_event.selection.rows
 
-                if admin_selected_rows:
+                if admin_selected_rows and admin_selected_rows[0] < len(admin_df_sorted):
                     target_row = admin_df_sorted.iloc[admin_selected_rows[0]]
                     row_id = int(target_row["row_id"])
                     row_key = f"admin_edit_{row_id}"
